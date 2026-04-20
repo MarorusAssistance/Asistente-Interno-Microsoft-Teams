@@ -2,38 +2,48 @@
 
 ## Componentes
 
-- `app-service`: FastAPI principal con endpoints para chat, Bot Framework, tickets, documentos, feedback y health.
-- `custom-incidents-api-function`: sistema fuente simulado de incidencias. Es la unica pieza que escribe en `incidents`.
-- `indexer-function`: toma documentos e incidencias, genera chunks, embeddings y el indice hibrido.
-- `PostgreSQL + pgvector`: persistencia de dominio, chunks, conversaciones, feedback y logs.
+- `app-service`: FastAPI principal. Expone `/api/chat`, `/api/messages`, health checks, tickets, documentos y feedback.
+- `custom-incidents-api-function`: sistema fuente simulado para incidencias.
+- `indexer-function`: genera chunks, embeddings y mantiene el indice.
+- `src/internal_assistant`: libreria compartida con configuracion, dominio, RAG, seguridad, cards y utilidades cloud/Teams.
+- `PostgreSQL + pgvector`: persistencia principal.
+- `teams-app`: manifiesto y empaquetado de la custom app.
+- `infra`: Bicep modular para Azure.
 
-## Flujo principal de preguntas
+## Flujo principal
 
-1. El usuario envia una pregunta.
-2. `app-service` detecta el intent y consulta el indice.
-3. Se hace retrieval hibrido con vector search + full-text search.
-4. El LLM responde solo con evidencia recuperada.
-5. Si no hay evidencia suficiente, el bot pide aclaracion hasta 2 veces.
-6. Si sigue sin poder responder, propone registrar una incidencia.
+1. El usuario pregunta desde `/api/chat` o desde Teams.
+2. `app-service` detecta el intent.
+3. Se generan embeddings y retrieval hibrido.
+4. El provider LLM responde solo con evidencia recuperada.
+5. Si falta evidencia, el sistema pide aclaracion.
+6. Si sigue faltando evidencia, propone registrar incidencia.
 
-## Flujo de registro de incidencia
+## Registro de incidencia
 
-1. El usuario expresa que quiere registrar una incidencia.
-2. El bot recopila campos minimos y guarda un borrador en `conversations.state`.
-3. Tras la confirmacion, `app-service` llama a `custom-incidents-api-function`.
-4. La Function persiste la incidencia y devuelve el registro creado.
-5. `app-service` llama a `indexer-function` para indexar ese ticket.
-6. El bot confirma al usuario que la incidencia fue creada e indexada.
+1. El bot recopila campos minimos.
+2. `app-service` llama a `custom-incidents-api-function`.
+3. La Function crea el ticket en PostgreSQL.
+4. `app-service` dispara `indexer-function`.
+5. El ticket se chunkifica e indexa.
 
-## Modulos compartidos
+## Runtime y configuracion
 
-- `config`: configuracion central con Pydantic Settings.
-- `db`: engine, sesiones y base declarativa.
-- `models`: tablas SQLAlchemy.
-- `schemas`: contratos Pydantic.
-- `rag`: chunking, scoring y retrieval.
-- `llm`: interfaz de provider, OpenAI, Azure OpenAI preparado y mock.
-- `chat`: orquestacion, intents y flujo conversacional.
-- `cards`: payloads sencillos de Adaptive Cards con fallback textual.
-- `observability`: logs estructurados y helpers de metricas.
-- `security`: validacion de secretos compartidos y API keys.
+- `config.py` centraliza App Settings para local y cloud.
+- `runtime.py` valida configuracion por entorno y construye health checks avanzados.
+- `teams.py` centraliza transformaciones de payloads de tarjetas y renderizado del manifiesto.
+
+## Azure
+
+- Web App Linux Python 3.12 para `app-service`
+- Dos Function Apps Linux Consumption
+- Storage Account comun para Functions
+- PostgreSQL Flexible Server con allowlist de `vector`
+- Application Insights opcional
+- Azure Bot con canal Teams
+
+## Observabilidad
+
+- Logs JSON a stdout en local y cloud
+- `retrieval_logs` en PostgreSQL
+- Integracion opcional con Application Insights cuando existe `APPLICATIONINSIGHTS_CONNECTION_STRING`

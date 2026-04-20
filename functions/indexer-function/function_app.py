@@ -6,9 +6,16 @@ import azure.functions as func
 
 from internal_assistant.db import session_scope
 from internal_assistant.functions import index_document, index_incident, rebuild_index
+from internal_assistant.observability import configure_logging
 from internal_assistant.security import assert_admin_api_key, assert_shared_secret
 
+configure_logging()
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+
+@app.route(route="health", methods=["GET"])
+def health(req: func.HttpRequest) -> func.HttpResponse:
+    return func.HttpResponse(json.dumps({"status": "ok", "service": "indexer-function"}), mimetype="application/json")
 
 
 @app.route(route="index/rebuild", methods=["POST"])

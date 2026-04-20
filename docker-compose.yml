@@ -28,6 +28,8 @@ services:
       INDEXER_API_BASE_URL: http://indexer-function:7071
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,6 +58,8 @@ services:
       DATABASE_URL: postgresql+psycopg://assistant:assistant@postgres:5432/assistant
     ports:
       - "7072:7071"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

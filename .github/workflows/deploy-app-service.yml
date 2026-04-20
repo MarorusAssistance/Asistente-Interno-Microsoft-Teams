@@ -1,0 +1,58 @@
+name: Deploy App Service
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_NAME: internal-assistant
+      ENVIRONMENT_NAME: demo
+      APP_ENV: demo
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      POSTGRES_ADMIN_USER: pgadmininternal
+      POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+      POSTGRES_DATABASE_NAME: assistant
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      CHAT_MODEL: gpt-4o-mini
+      EMBEDDING_MODEL: text-embedding-3-small
+      EMBEDDING_DIMENSIONS: 512
+      ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+      APP_SHARED_SECRET: ${{ secrets.APP_SHARED_SECRET }}
+      MICROSOFT_APP_ID: ${{ secrets.MICROSOFT_APP_ID }}
+      MICROSOFT_APP_PASSWORD: ${{ secrets.MICROSOFT_APP_PASSWORD }}
+      TEAMS_APP_ID: ${{ secrets.MICROSOFT_APP_ID }}
+      ALLOWED_ORIGINS: https://teams.microsoft.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Sync dependencies
+        run: python -m uv sync
+
+      - name: Run tests
+        run: python -m uv run pytest -q
+
+      - name: Configure app settings
+        run: bash ./scripts/configure_app_settings.sh
+
+      - name: Deploy App Service
+        run: bash ./scripts/deploy_app_service.sh

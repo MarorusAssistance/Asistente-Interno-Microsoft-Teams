@@ -11,13 +11,14 @@ class MockLLMProvider(LLMProvider):
     def __init__(self, clarification_phrase: str = "Necesito un poco mas de detalle para responder con seguridad.") -> None:
         self.settings = get_settings()
         self.clarification_phrase = clarification_phrase
+        self.embedding_dimensions = 512
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
         for text in texts:
             digest = sha256(text.encode("utf-8")).digest()
             base = list(digest)
-            vector = [float(base[idx % len(base)]) / 255.0 for idx in range(self.settings.embedding_dimensions)]
+            vector = [float(base[idx % len(base)]) / 255.0 for idx in range(self.embedding_dimensions)]
             vectors.append(vector)
         return vectors
 

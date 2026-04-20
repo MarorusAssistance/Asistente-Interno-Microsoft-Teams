@@ -6,10 +6,20 @@ import azure.functions as func
 
 from internal_assistant.db import session_scope
 from internal_assistant.functions import create_incident, get_incident, list_incidents, update_incident
+from internal_assistant.observability import configure_logging
 from internal_assistant.schemas import IncidentCreate, IncidentUpdate
 from internal_assistant.security import assert_shared_secret
 
+configure_logging()
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+
+@app.route(route="health", methods=["GET"])
+def health(req: func.HttpRequest) -> func.HttpResponse:
+    return func.HttpResponse(
+        json.dumps({"status": "ok", "service": "custom-incidents-api-function"}),
+        mimetype="application/json",
+    )
 
 
 @app.route(route="incidents", methods=["GET"])

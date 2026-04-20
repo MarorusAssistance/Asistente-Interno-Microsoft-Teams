@@ -18,6 +18,7 @@ def configure_logging() -> None:
     formatter = JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
+    _configure_azure_monitor(settings.applicationinsights_connection_string)
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -26,3 +27,21 @@ def get_logger(name: str) -> logging.Logger:
 
 def log_kv(logger: logging.Logger, message: str, **kwargs: Any) -> None:
     logger.info(message, extra={"event": kwargs})
+
+
+def _configure_azure_monitor(connection_string: str) -> None:
+    if not connection_string.strip():
+        return
+
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "APPLICATIONINSIGHTS_CONNECTION_STRING configurado, pero azure-monitor-opentelemetry no esta instalado"
+        )
+        return
+
+    try:
+        configure_azure_monitor(connection_string=connection_string, logger_name="")
+    except Exception as exc:
+        logging.getLogger(__name__).warning("No se pudo inicializar Azure Monitor: %s", exc)

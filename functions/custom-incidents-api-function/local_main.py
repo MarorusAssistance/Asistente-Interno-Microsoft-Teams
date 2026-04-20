@@ -16,6 +16,11 @@ app = FastAPI(title="custom-incidents-api-function", version="0.1.0")
 DbSession = Annotated[Session, Depends(get_session)]
 
 
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok", "service": "custom-incidents-api-function"}
+
+
 @app.get("/incidents", response_model=list[IncidentRead])
 def incidents(session: DbSession) -> list[IncidentRead]:
     return list_incidents(session)
