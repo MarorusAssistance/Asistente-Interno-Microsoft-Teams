@@ -1,0 +1,242 @@
+[
+  {
+    "title": "Gestión de entregas parciales #1",
+    "document_type": "procedimiento",
+    "department": "Operaciones",
+    "affected_system": "LogiCore ERP",
+    "content": "Para registrar una entrega parcial en LogiCore ERP, el operador debe abrir el pedido, marcar los bultos realmente expedidos y dejar el resto en estado pendiente. El sistema genera un evento de trazabilidad y actualiza la promesa de entrega.\n\nVersion interna 1. Este documento aplica al area de Operaciones y al sistema LogiCore ERP.",
+    "tags": [
+      "operaciones",
+      "logicore-erp"
+    ],
+    "source_url": "https://intranet.logistica.local/logicore-erp/doc-1"
+  },
+  {
+    "title": "Replanificación por corte de carretera #2",
+    "document_type": "procedimiento",
+    "department": "Operaciones",
+    "affected_system": "RutaNexo",
+    "content": "Cuando una ruta se bloquea, el coordinador en RutaNexo debe activar la opción de recalculo asistido, revisar restricciones del vehiculo y confirmar la nueva secuencia antes de enviar la ruta al conductor.\n\nVersion interna 2. Este documento aplica al area de Operaciones y al sistema RutaNexo.",
+    "tags": [
+      "operaciones",
+      "rutanexo"
+    ],
+    "source_url": "https://intranet.logistica.local/rutanexo/doc-2"
+  },
+  {
+    "title": "Conteo ciclico en almacen #3",
+    "document_type": "politica",
+    "department": "Operaciones",
+    "affected_system": "AlmaTrack WMS",
+    "content": "AlmaTrack WMS exige que los conteos ciclicos con diferencia superior al 2 por ciento queden revisados por un supervisor. Hasta entonces la ubicacion queda en cuarentena operativa.\n\nVersion interna 3. Este documento aplica al area de Operaciones y al sistema AlmaTrack WMS.",
+    "tags": [
+      "operaciones",
+      "almatrack-wms"
+    ],
+    "source_url": "https://intranet.logistica.local/almatrack-wms/doc-3"
+  },
+  {
+    "title": "Acceso temporal para personal externo #4",
+    "document_type": "procedimiento",
+    "department": "Seguridad",
+    "affected_system": "SafeGate",
+    "content": "El acceso temporal a SafeGate para visitas tecnicas requiere solicitud del responsable interno, validacion de Seguridad y fecha de expiracion obligatoria. Nunca se debe reutilizar una credencial antigua.\n\nVersion interna 4. Este documento aplica al area de Seguridad y al sistema SafeGate.",
+    "tags": [
+      "seguridad",
+      "safegate"
+    ],
+    "source_url": "https://intranet.logistica.local/safegate/doc-4"
+  },
+  {
+    "title": "Uso de credenciales compartidas #5",
+    "document_type": "politica",
+    "department": "Seguridad",
+    "affected_system": "SafeGate",
+    "content": "Las credenciales compartidas estan prohibidas. Cada acceso debe estar asociado a una persona identificable. Las excepciones deben aprobarse por Seguridad y quedar documentadas.\n\nVersion interna 5. Este documento aplica al area de Seguridad y al sistema SafeGate.",
+    "tags": [
+      "seguridad",
+      "safegate"
+    ],
+    "source_url": "https://intranet.logistica.local/safegate/doc-5"
+  },
+  {
+    "title": "Alta de nuevos conductores #6",
+    "document_type": "guia",
+    "department": "Onboarding",
+    "affected_system": "OnboardHub",
+    "content": "OnboardHub centraliza la alta de conductores. El equipo de onboarding debe validar licencia, documentacion fiscal, curso de seguridad y asignacion de supervisor antes del primer turno.\n\nVersion interna 6. Este documento aplica al area de Onboarding y al sistema OnboardHub.",
+    "tags": [
+      "onboarding",
+      "onboardhub"
+    ],
+    "source_url": "https://intranet.logistica.local/onboardhub/doc-6"
+  },
+  {
+    "title": "Entrega de manuales operativos #7",
+    "document_type": "guia",
+    "department": "Onboarding",
+    "affected_system": "DocuFlow",
+    "content": "DocuFlow almacena los manuales de arranque para personal de operaciones. Cada nuevo empleado debe confirmar lectura de politicas de seguridad, rutas y uso de dispositivos moviles.\n\nVersion interna 7. Este documento aplica al area de Onboarding y al sistema DocuFlow.",
+    "tags": [
+      "onboarding",
+      "docuflow"
+    ],
+    "source_url": "https://intranet.logistica.local/docuflow/doc-7"
+  },
+  {
+    "title": "Escalado de incidencias criticas #8",
+    "document_type": "politica",
+    "department": "Politicas internas",
+    "affected_system": "DocuFlow",
+    "content": "Toda incidencia con impacto en expediciones de mas de dos almacenes debe escalarse en menos de 15 minutos al responsable de continuidad y abrir ticket con prioridad alta.\n\nVersion interna 8. Este documento aplica al area de Politicas internas y al sistema DocuFlow.",
+    "tags": [
+      "politicas-internas",
+      "docuflow"
+    ],
+    "source_url": "https://intranet.logistica.local/docuflow/doc-8"
+  },
+  {
+    "title": "Cambios maestros de clientes #9",
+    "document_type": "politica",
+    "department": "Politicas internas",
+    "affected_system": "LogiCore ERP",
+    "content": "Los cambios de datos maestros de clientes en LogiCore ERP requieren doble validacion cuando afectan direcciones de entrega recurrentes o reglas de facturacion.\n\nVersion interna 9. Este documento aplica al area de Politicas internas y al sistema LogiCore ERP.",
+    "tags": [
+      "politicas-internas",
+      "logicore-erp"
+    ],
+    "source_url": "https://intranet.logistica.local/logicore-erp/doc-9"
+  },
+  {
+    "title": "Consulta de SOPs operativos #10",
+    "document_type": "procedimiento",
+    "department": "Operaciones",
+    "affected_system": "DocuFlow",
+    "content": "Las SOPs vigentes se consultan siempre en DocuFlow. Si una copia local contradice el documento publicado, prevalece la version con fecha mas reciente del repositorio interno.\n\nVersion interna 10. Este documento aplica al area de Operaciones y al sistema DocuFlow.",
+    "tags": [
+      "operaciones",
+      "docuflow"
+    ],
+    "source_url": "https://intranet.logistica.local/docuflow/doc-10"
+  },
+  {
+    "title": "Gestión de entregas parciales #11",
+    "document_type": "procedimiento",
+    "department": "Operaciones",
+    "affected_system": "LogiCore ERP",
+    "content": "Para registrar una entrega parcial en LogiCore ERP, el operador debe abrir el pedido, marcar los bultos realmente expedidos y dejar el resto en estado pendiente. El sistema genera un evento de trazabilidad y actualiza la promesa de entrega.\n\nVersion interna 11. Este documento aplica al area de Operaciones y al sistema LogiCore ERP.",
+    "tags": [
+      "operaciones",
+      "logicore-erp"
+    ],
+    "source_url": "https://intranet.logistica.local/logicore-erp/doc-11"
+  },
+  {
+    "title": "Replanificación por corte de carretera #12",
+    "document_type": "procedimiento",
+    "department": "Operaciones",
+    "affected_system": "RutaNexo",
+    "content": "Cuando una ruta se bloquea, el coordinador en RutaNexo debe activar la opción de recalculo asistido, revisar restricciones del vehiculo y confirmar la nueva secuencia antes de enviar la ruta al conductor.\n\nVersion interna 12. Este documento aplica al area de Operaciones y al sistema RutaNexo.",
+    "tags": [
+      "operaciones",
+      "rutanexo"
+    ],
+    "source_url": "https://intranet.logistica.local/rutanexo/doc-12"
+  },
+  {
+    "title": "Conteo ciclico en almacen #13",
+    "document_type": "politica",
+    "department": "Operaciones",
+    "affected_system": "AlmaTrack WMS",
+    "content": "AlmaTrack WMS exige que los conteos ciclicos con diferencia superior al 2 por ciento queden revisados por un supervisor. Hasta entonces la ubicacion queda en cuarentena operativa.\n\nVersion interna 13. Este documento aplica al area de Operaciones y al sistema AlmaTrack WMS.",
+    "tags": [
+      "operaciones",
+      "almatrack-wms"
+    ],
+    "source_url": "https://intranet.logistica.local/almatrack-wms/doc-13"
+  },
+  {
+    "title": "Acceso temporal para personal externo #14",
+    "document_type": "procedimiento",
+    "department": "Seguridad",
+    "affected_system": "SafeGate",
+    "content": "El acceso temporal a SafeGate para visitas tecnicas requiere solicitud del responsable interno, validacion de Seguridad y fecha de expiracion obligatoria. Nunca se debe reutilizar una credencial antigua.\n\nVersion interna 14. Este documento aplica al area de Seguridad y al sistema SafeGate.",
+    "tags": [
+      "seguridad",
+      "safegate"
+    ],
+    "source_url": "https://intranet.logistica.local/safegate/doc-14"
+  },
+  {
+    "title": "Uso de credenciales compartidas #15",
+    "document_type": "politica",
+    "department": "Seguridad",
+    "affected_system": "SafeGate",
+    "content": "Las credenciales compartidas estan prohibidas. Cada acceso debe estar asociado a una persona identificable. Las excepciones deben aprobarse por Seguridad y quedar documentadas.\n\nVersion interna 15. Este documento aplica al area de Seguridad y al sistema SafeGate.",
+    "tags": [
+      "seguridad",
+      "safegate"
+    ],
+    "source_url": "https://intranet.logistica.local/safegate/doc-15"
+  },
+  {
+    "title": "Alta de nuevos conductores #16",
+    "document_type": "guia",
+    "department": "Onboarding",
+    "affected_system": "OnboardHub",
+    "content": "OnboardHub centraliza la alta de conductores. El equipo de onboarding debe validar licencia, documentacion fiscal, curso de seguridad y asignacion de supervisor antes del primer turno.\n\nVersion interna 16. Este documento aplica al area de Onboarding y al sistema OnboardHub.",
+    "tags": [
+      "onboarding",
+      "onboardhub"
+    ],
+    "source_url": "https://intranet.logistica.local/onboardhub/doc-16"
+  },
+  {
+    "title": "Entrega de manuales operativos #17",
+    "document_type": "guia",
+    "department": "Onboarding",
+    "affected_system": "DocuFlow",
+    "content": "DocuFlow almacena los manuales de arranque para personal de operaciones. Cada nuevo empleado debe confirmar lectura de politicas de seguridad, rutas y uso de dispositivos moviles.\n\nVersion interna 17. Este documento aplica al area de Onboarding y al sistema DocuFlow.",
+    "tags": [
+      "onboarding",
+      "docuflow"
+    ],
+    "source_url": "https://intranet.logistica.local/docuflow/doc-17"
+  },
+  {
+    "title": "Escalado de incidencias criticas #18",
+    "document_type": "politica",
+    "department": "Politicas internas",
+    "affected_system": "DocuFlow",
+    "content": "Toda incidencia con impacto en expediciones de mas de dos almacenes debe escalarse en menos de 15 minutos al responsable de continuidad y abrir ticket con prioridad alta.\n\nVersion interna 18. Este documento aplica al area de Politicas internas y al sistema DocuFlow.",
+    "tags": [
+      "politicas-internas",
+      "docuflow"
+    ],
+    "source_url": "https://intranet.logistica.local/docuflow/doc-18"
+  },
+  {
+    "title": "Cambios maestros de clientes #19",
+    "document_type": "politica",
+    "department": "Politicas internas",
+    "affected_system": "LogiCore ERP",
+    "content": "Los cambios de datos maestros de clientes en LogiCore ERP requieren doble validacion cuando afectan direcciones de entrega recurrentes o reglas de facturacion.\n\nVersion interna 19. Este documento aplica al area de Politicas internas y al sistema LogiCore ERP.",
+    "tags": [
+      "politicas-internas",
+      "logicore-erp"
+    ],
+    "source_url": "https://intranet.logistica.local/logicore-erp/doc-19"
+  },
+  {
+    "title": "Consulta de SOPs operativos #20",
+    "document_type": "procedimiento",
+    "department": "Operaciones",
+    "affected_system": "DocuFlow",
+    "content": "Las SOPs vigentes se consultan siempre en DocuFlow. Si una copia local contradice el documento publicado, prevalece la version con fecha mas reciente del repositorio interno.\n\nVersion interna 20. Este documento aplica al area de Operaciones y al sistema DocuFlow.",
+    "tags": [
+      "operaciones",
+      "docuflow"
+    ],
+    "source_url": "https://intranet.logistica.local/docuflow/doc-20"
+  }
+]

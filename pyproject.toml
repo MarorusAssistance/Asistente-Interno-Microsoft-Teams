@@ -1,0 +1,52 @@
+[project]
+name = "internal-assistant-mvp"
+version = "0.1.0"
+description = "MVP tecnico de asistente interno para Microsoft Teams con FastAPI, Azure Functions y PostgreSQL + pgvector."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "alembic>=1.14.1",
+  "azure-functions>=1.21.3",
+  "botbuilder-core>=4.16.2",
+  "botbuilder-schema>=4.16.2",
+  "fastapi>=0.115.6",
+  "httpx>=0.28.1",
+  "openai>=1.59.7",
+  "pgvector>=0.3.6",
+  "psycopg[binary]>=3.2.3",
+  "pydantic>=2.10.4",
+  "pydantic-settings>=2.7.1",
+  "python-dotenv>=1.0.1",
+  "python-json-logger>=3.2.1",
+  "sqlalchemy>=2.0.36",
+  "uvicorn[standard]>=0.34.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.4",
+  "pytest-asyncio>=0.25.0",
+  "pytest-cov>=6.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  ".",
+  "src",
+]
+testpaths = [
+  "tests",
+]
+
+[tool.uv]
+default-groups = ["dev"]
