@@ -4,7 +4,7 @@
 
 - Tenant con sideloading o custom apps habilitado.
 - Azure Bot desplegado.
-- `MICROSOFT_APP_ID` y `MICROSOFT_APP_PASSWORD`.
+- `MICROSOFT_APP_ID`, `MICROSOFT_APP_PASSWORD` y `MICROSOFT_APP_TENANT_ID`.
 - `BOT_ENDPOINT` apuntando a `https://<webapp>.azurewebsites.net/api/messages`.
 
 ## Configurar el bot
@@ -42,7 +42,7 @@ Salida:
 
 ## Problemas comunes
 
-- `401` en `/api/messages`: revisar `MICROSOFT_APP_ID` y `MICROSOFT_APP_PASSWORD`.
+- `401` o `500` en `/api/messages`: revisar `MICROSOFT_APP_ID`, `MICROSOFT_APP_PASSWORD` y `MICROSOFT_APP_TENANT_ID`.
 - La app no aparece en Teams: el tenant no permite custom apps o el zip es invalido.
 - El bot no responde en canal: revisar el scope `team` en el manifiesto y el endpoint del bot.
 - Las tarjetas no se ven: Teams usa fallback textual, pero revisa que el payload Adaptive Card sea valido.

@@ -65,6 +65,8 @@ def validate_runtime_settings(settings: Settings, *, require_bot: bool | None = 
             errors.append("MICROSOFT_APP_ID es obligatorio en APP_ENV=dev|demo")
         if not settings.microsoft_app_password.strip():
             errors.append("MICROSOFT_APP_PASSWORD es obligatorio en APP_ENV=dev|demo")
+        if not settings.microsoft_app_tenant_id.strip():
+            errors.append("MICROSOFT_APP_TENANT_ID es obligatorio en APP_ENV=dev|demo")
         if not settings.bot_endpoint.strip():
             errors.append("BOT_ENDPOINT es obligatorio en APP_ENV=dev|demo")
 

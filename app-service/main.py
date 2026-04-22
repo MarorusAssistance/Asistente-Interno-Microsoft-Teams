@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Annotated
 
 from botbuilder.core import ActivityHandler, BotFrameworkAdapter, BotFrameworkAdapterSettings, CardFactory, TurnContext
@@ -9,6 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+APP_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = APP_ROOT / "src"
+
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
+if SRC_ROOT.exists() and str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from internal_assistant.chat import ChatService
 from internal_assistant.config import get_settings
@@ -23,7 +33,13 @@ configure_logging()
 settings = get_settings()
 logger = get_logger(__name__)
 app = FastAPI(title="internal-assistant-mvp", version="0.1.0")
-adapter = BotFrameworkAdapter(BotFrameworkAdapterSettings(settings.microsoft_app_id, settings.microsoft_app_password))
+adapter = BotFrameworkAdapter(
+    BotFrameworkAdapterSettings(
+        settings.microsoft_app_id,
+        settings.microsoft_app_password,
+        channel_auth_tenant=settings.microsoft_app_tenant_id or None,
+    )
+)
 
 if settings.allowed_origins_list:
     app.add_middleware(
@@ -114,7 +130,11 @@ async def messages(request: Request) -> Response:
     if (activity.type or "").lower() not in {"message", "invoke"}:
         return JSONResponse(status_code=200, content={"status": "ignored", "reason": "Actividad no soportada en el MVP"})
 
-    invoke_response = await adapter.process_activity(activity, request.headers.get("Authorization", ""), bot.on_turn)
+    try:
+        invoke_response = await adapter.process_activity(activity, request.headers.get("Authorization", ""), bot.on_turn)
+    except PermissionError as exc:
+        logger.warning("Bot Framework auth error: %s", exc)
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized Bot Framework request"})
     if invoke_response:
         return JSONResponse(status_code=invoke_response.status, content=invoke_response.body)
     return Response(status_code=200)

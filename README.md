@@ -93,7 +93,7 @@ curl -X POST http://localhost:8000/api/chat \
 
 ## Teams
 
-1. Configurar `MICROSOFT_APP_ID`, `MICROSOFT_APP_PASSWORD`, `TEAMS_APP_ID` y `BOT_ENDPOINT`.
+1. Configurar `MICROSOFT_APP_ID`, `MICROSOFT_APP_PASSWORD`, `MICROSOFT_APP_TENANT_ID`, `TEAMS_APP_ID` y `BOT_ENDPOINT`.
 2. Generar el paquete:
 
 ```bash
@@ -122,6 +122,7 @@ Secrets esperados:
 - `APP_SHARED_SECRET`
 - `MICROSOFT_APP_ID`
 - `MICROSOFT_APP_PASSWORD`
+- `MICROSOFT_APP_TENANT_ID`
 
 Los workflows usan `azure/login` con OIDC.
 

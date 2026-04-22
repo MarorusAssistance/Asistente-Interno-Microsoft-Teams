@@ -31,6 +31,7 @@ def test_validate_runtime_settings_requires_bot_and_openai_in_demo():
         app_shared_secret="change-this-shared-secret",
         microsoft_app_id="",
         microsoft_app_password="",
+        microsoft_app_tenant_id="",
         bot_endpoint="",
     )
 
@@ -40,6 +41,7 @@ def test_validate_runtime_settings_requires_bot_and_openai_in_demo():
     assert "ADMIN_API_KEY debe configurarse con un valor no placeholder" in errors
     assert "APP_SHARED_SECRET debe configurarse con un valor no placeholder" in errors
     assert "MICROSOFT_APP_ID es obligatorio en APP_ENV=dev|demo" in errors
+    assert "MICROSOFT_APP_TENANT_ID es obligatorio en APP_ENV=dev|demo" in errors
 
 
 def test_validate_runtime_settings_allows_local_defaults():
@@ -55,6 +57,7 @@ def test_validate_runtime_settings_allows_local_defaults():
         app_shared_secret="change-this-shared-secret",
         microsoft_app_id="",
         microsoft_app_password="",
+        microsoft_app_tenant_id="",
         bot_endpoint="",
     )
 

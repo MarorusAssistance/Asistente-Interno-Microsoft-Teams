@@ -41,6 +41,7 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("MICROSOFT_APP_PASSWORD", "BOT_APP_PASSWORD"),
     )
+    microsoft_app_tenant_id: str = Field(default="", alias="MICROSOFT_APP_TENANT_ID")
     teams_app_id: str = Field(default="", alias="TEAMS_APP_ID")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     retrieval_confidence_threshold: float = Field(default=0.58, alias="RETRIEVAL_CONFIDENCE_THRESHOLD")

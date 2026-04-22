@@ -5,7 +5,7 @@
 - Azure CLI autenticado con permisos sobre el Resource Group objetivo.
 - Python 3.12 y `uv`.
 - Un Resource Group existente o permiso para crearlo.
-- Una app registration para el bot con `MICROSOFT_APP_ID` y `MICROSOFT_APP_PASSWORD`.
+- Una app registration para el bot con `MICROSOFT_APP_ID`, `MICROSOFT_APP_PASSWORD` y el tenant `MICROSOFT_APP_TENANT_ID`.
 - OpenAI API key valida.
 
 ## Variables
@@ -30,6 +30,7 @@ ADMIN_API_KEY=<admin-key>
 APP_SHARED_SECRET=<shared-secret>
 MICROSOFT_APP_ID=<bot-app-id>
 MICROSOFT_APP_PASSWORD=<bot-secret>
+MICROSOFT_APP_TENANT_ID=<entra-tenant-id>
 TEAMS_APP_ID=<teams-app-id>
 ```
 
@@ -143,5 +144,6 @@ curl -X POST "https://<webapp>.azurewebsites.net/api/chat" \
 - `APP_SHARED_SECRET`
 - `MICROSOFT_APP_ID`
 - `MICROSOFT_APP_PASSWORD`
+- `MICROSOFT_APP_TENANT_ID`
 
 Los workflows usan `azure/login` con OIDC. No usan publish profiles.
