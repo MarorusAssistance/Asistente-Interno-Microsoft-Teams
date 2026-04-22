@@ -6,13 +6,19 @@ param location string
 param storageConnectionString string
 param appSettings array
 
+var normalizedAppSettings = [for setting in appSettings: {
+  name: setting.name
+  value: string(setting.value)
+}]
+
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
   location: location
   kind: 'linux'
   sku: {
-    name: 'Y1'
-    tier: 'Dynamic'
+    name: 'B1'
+    tier: 'Basic'
+    capacity: 1
   }
   properties: {
     reserved: true
@@ -42,13 +48,11 @@ resource indexerFunction 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: plan.id
     httpsOnly: true
     siteConfig: {
-      linuxFxVersion: 'Python|3.12'
+      alwaysOn: true
+      linuxFxVersion: 'PYTHON|3.12'
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
-      appSettings: concat(functionRuntimeSettings, [for setting in appSettings: {
-        name: setting.name
-        value: setting.value
-      }])
+      appSettings: concat(functionRuntimeSettings, normalizedAppSettings)
     }
   }
 }
@@ -61,13 +65,11 @@ resource incidentsFunction 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: plan.id
     httpsOnly: true
     siteConfig: {
-      linuxFxVersion: 'Python|3.12'
+      alwaysOn: true
+      linuxFxVersion: 'PYTHON|3.12'
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
-      appSettings: concat(functionRuntimeSettings, [for setting in appSettings: {
-        name: setting.name
-        value: setting.value
-      }])
+      appSettings: concat(functionRuntimeSettings, normalizedAppSettings)
     }
   }
 }

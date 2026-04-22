@@ -20,6 +20,9 @@ class FakeResult:
     def all(self):
         return list(self._scalars_data)
 
+    def mappings(self):
+        return self
+
     def scalar_one(self):
         return self._scalar_value
 
@@ -69,6 +72,22 @@ class FakeSession:
                         dimensions = len(chunk.embedding)
                         break
                 return FakeResult(scalar_value=dimensions)
+            if "from chunks" in sql and "embedding <=> embedding" in sql:
+                rows = []
+                for chunk in self.chunks.values():
+                    if chunk.embedding is None:
+                        continue
+                    rows.append(
+                        {
+                            "id": chunk.id,
+                            "source_type": chunk.source_type,
+                            "source_id": chunk.source_id,
+                            "content": chunk.content,
+                            "metadata": chunk.metadata_,
+                            "score": 1.0,
+                        }
+                    )
+                return FakeResult(scalars_data=rows[:5])
             if "from pg_extension" in sql and "extname = 'vector'" in sql:
                 return FakeResult(scalar_value=True)
             raise AssertionError(f"SQL no esperado: {statement.text}")

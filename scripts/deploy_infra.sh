@@ -12,13 +12,14 @@ require_vars PROJECT_NAME ENVIRONMENT_NAME AZURE_LOCATION AZURE_RESOURCE_GROUP P
 ALLOWED_ORIGINS_JSON="$(csv_to_json_array "${ALLOWED_ORIGINS:-}")"
 ENABLE_APPLICATION_INSIGHTS="${ENABLE_APPLICATION_INSIGHTS:-true}"
 DEPLOYMENT_NAME="${PROJECT_NAME}-${ENVIRONMENT_NAME}-infra"
+TEMPLATE_FILE="$(native_path "${ROOT_DIR}/infra/main.bicep")"
 
 az group create --name "${AZURE_RESOURCE_GROUP}" --location "${AZURE_LOCATION}" >/dev/null
 
 az deployment group create \
   --name "${DEPLOYMENT_NAME}" \
   --resource-group "${AZURE_RESOURCE_GROUP}" \
-  --template-file "${ROOT_DIR}/infra/main.bicep" \
+  --template-file "${TEMPLATE_FILE}" \
   --parameters \
     projectName="${PROJECT_NAME}" \
     environmentName="${ENVIRONMENT_NAME}" \
@@ -38,13 +39,19 @@ az deployment group create \
     enableApplicationInsights="${ENABLE_APPLICATION_INSIGHTS}" >/dev/null
 
 load_bicep_outputs
-CLIENT_IP="$(current_public_ip)"
-az postgres flexible-server firewall-rule create \
+CLIENT_IP="$(current_public_ip | tr -d '\r\n')"
+if [[ -z "$(az postgres flexible-server firewall-rule list \
   --resource-group "${AZURE_RESOURCE_GROUP}" \
   --name "${AZURE_POSTGRES_SERVER_NAME}" \
-  --rule-name "local-client" \
-  --start-ip-address "${CLIENT_IP}" \
-  --end-ip-address "${CLIENT_IP}" >/dev/null
+  --query "[?name=='local-client'].name" \
+  -o tsv 2>/dev/null)" ]]; then
+  az postgres flexible-server firewall-rule create \
+    --resource-group "${AZURE_RESOURCE_GROUP}" \
+    --name "${AZURE_POSTGRES_SERVER_NAME}" \
+    --rule-name "local-client" \
+    --start-ip-address "${CLIENT_IP}" \
+    --end-ip-address "${CLIENT_IP}" >/dev/null
+fi
 
 echo "Infra desplegada: ${AZURE_RESOURCE_GROUP}"
 echo "Web App: ${AZURE_WEBAPP_NAME}"

@@ -4,6 +4,13 @@ param location string
 param allowedOrigins string
 param appSettings array
 
+var allowedOriginsArray = empty(allowedOrigins) ? [] : split(allowedOrigins, ',')
+var normalizedAppSettings = [for setting in appSettings: {
+  name: setting.name
+  value: string(setting.value)
+}]
+var startupCommand = 'python3 -m gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT --timeout 600 --access-logfile - --error-logfile - --chdir app-service main:app'
+
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
   location: location
@@ -30,14 +37,11 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       healthCheckPath: '/api/health'
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
-      cors: empty(allowedOrigins) ? null : {
-        allowedOrigins: split(allowedOrigins, ',')
+      cors: {
+        allowedOrigins: allowedOriginsArray
       }
-      appCommandLine: 'gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT --timeout 600 --access-logfile ''-'' --error-logfile ''-'' --chdir app-service main:app'
-      appSettings: [for setting in appSettings: {
-        name: setting.name
-        value: setting.value
-      }]
+      appCommandLine: startupCommand
+      appSettings: normalizedAppSettings
     }
   }
 }

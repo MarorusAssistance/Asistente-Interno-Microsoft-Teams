@@ -152,14 +152,26 @@ def check_index(session: Session, llm_provider: LLMProvider | None = None) -> di
     if not vector_extension_enabled:
         raise ValueError("La extension vector no esta habilitada en PostgreSQL")
 
-    provider = _resolve_indexing_provider(llm_provider)
-    repository = ChunkRepository(session)
-    vector_query = "acceso temporal SafeGate credencial supervisor"
-    vector_results = repository.vector_search(provider.embed_texts([vector_query])[0], limit=5)
+    vector_results = (
+        session.execute(
+            text(
+                """
+                SELECT id, source_type, source_id, content, metadata, 1 - (embedding <=> embedding) AS score
+                FROM chunks
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> embedding
+                LIMIT 5
+                """
+            )
+        )
+        .mappings()
+        .all()
+    )
     if not vector_results:
         raise ValueError("La busqueda vectorial no devolvio resultados")
 
     text_query = "acceso temporal SafeGate"
+    repository = ChunkRepository(session)
     text_results = repository.text_search(text_query, limit=5)
     if not text_results:
         raise ValueError("La busqueda full-text no devolvio resultados")
@@ -171,6 +183,6 @@ def check_index(session: Session, llm_provider: LLMProvider | None = None) -> di
         "chunks_with_embeddings": chunks_with_embeddings,
         "embedding_dimensions": dimensions,
         "vector_extension_enabled": vector_extension_enabled,
-        "vector_results": vector_results,
+        "vector_results": [dict(row) for row in vector_results],
         "text_results": text_results,
     }

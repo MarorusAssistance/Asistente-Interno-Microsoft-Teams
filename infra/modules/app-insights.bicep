@@ -24,5 +24,5 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = if (enableApplica
   }
 }
 
-output connectionString string = enableApplicationInsights ? insights.properties.ConnectionString : ''
-output appInsightsName string = enableApplicationInsights ? insights.name : ''
+output connectionString string = enableApplicationInsights ? insights!.properties.ConnectionString : ''
+output appInsightsName string = enableApplicationInsights ? insights!.name : ''

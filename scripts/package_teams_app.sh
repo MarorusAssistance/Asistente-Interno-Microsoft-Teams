@@ -20,8 +20,10 @@ require_vars MICROSOFT_APP_ID TEAMS_APP_ID BOT_ENDPOINT
 
 BUILD_DIR="${ROOT_DIR}/teams-app/build"
 mkdir -p "${BUILD_DIR}"
+TEMPLATE_FILE="$(native_path "${ROOT_DIR}/teams-app/manifest.template.json")"
+MANIFEST_FILE="$(native_path "${BUILD_DIR}/manifest.json")"
 
-"${PYTHON_CMD[@]}" - "${ROOT_DIR}/teams-app/manifest.template.json" "${BUILD_DIR}/manifest.json" "${TEAMS_APP_ID}" "${MICROSOFT_APP_ID}" "${BOT_ENDPOINT}" <<'PY'
+"${PYTHON_CMD[@]}" - "${TEMPLATE_FILE}" "${MANIFEST_FILE}" "${TEAMS_APP_ID}" "${MICROSOFT_APP_ID}" "${BOT_ENDPOINT}" <<'PY'
 from pathlib import Path
 import json
 import sys

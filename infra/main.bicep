@@ -50,7 +50,7 @@ module appInsights './modules/app-insights.bicep' = {
   }
 }
 
-var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storage.outputs.storageAccountName};AccountKey=${listKeys(resourceId('Microsoft.Storage/storageAccounts', storage.outputs.storageAccountName), '2023-05-01').keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+var storageConnectionString = storage.outputs.connectionString
 
 module postgres './modules/postgres.bicep' = {
   name: '${baseName}-postgres'
@@ -116,10 +116,6 @@ var commonAppSettings = [
     name: 'LOG_LEVEL'
     value: 'INFO'
   }
-  {
-    name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
-    value: 'false'
-  }
 ]
 
 var webAppHostname = '${webAppName}.azurewebsites.net'
@@ -165,7 +161,11 @@ module appService './modules/app-service.bicep' = {
       }
       {
         name: 'WEBSITE_RUN_FROM_PACKAGE'
-        value: '1'
+        value: '0'
+      }
+      {
+        name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
+        value: 'true'
       }
     ])
   }
@@ -193,8 +193,16 @@ module functions './modules/functions.bicep' = {
         value: '/home/site/wwwroot:/home/site/wwwroot/src:/home/site/wwwroot/.python_packages/lib/site-packages'
       }
       {
-        name: 'WEBSITE_RUN_FROM_PACKAGE'
-        value: '1'
+        name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
+        value: 'true'
+      }
+      {
+        name: 'ENABLE_ORYX_BUILD'
+        value: 'true'
+      }
+      {
+        name: 'AzureWebJobsFeatureFlags'
+        value: 'EnableWorkerIndexing'
       }
     ])
   }

@@ -10,19 +10,25 @@ from internal_assistant.llm.openai_compatible_provider import OpenAICompatiblePr
 from internal_assistant.schemas.chat import AssistantDecision
 
 
+EMBEDDING_BATCH_SIZE = 32
+
+
 class OpenAIProvider(LLMProvider):
     def __init__(self) -> None:
         settings = get_settings()
         self.settings = settings
-        self.client = OpenAI(api_key=settings.openai_api_key)
+        self.client = OpenAI(api_key=settings.openai_api_key, max_retries=0, timeout=120.0)
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        response = self.client.embeddings.create(
-            model=self.settings.embedding_model,
-            input=texts,
-            dimensions=self.settings.embedding_dimensions,
-        )
-        embeddings = [item.embedding for item in response.data]
+        embeddings: list[list[float]] = []
+        for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
+            batch = texts[start : start + EMBEDDING_BATCH_SIZE]
+            response = self.client.embeddings.create(
+                model=self.settings.embedding_model,
+                input=batch,
+                dimensions=self.settings.embedding_dimensions,
+            )
+            embeddings.extend(item.embedding for item in response.data)
         return validate_embedding_dimensions(embeddings, self.settings.embedding_dimensions)
 
     def generate_chat_response(self, *, question: str, context_chunks: list[dict], conversation_state: dict) -> AssistantDecision:

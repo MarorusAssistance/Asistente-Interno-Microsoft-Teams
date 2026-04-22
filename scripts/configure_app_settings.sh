@@ -44,14 +44,14 @@ az webapp config appsettings set \
     MICROSOFT_APP_PASSWORD="${MICROSOFT_APP_PASSWORD}" \
     TEAMS_APP_ID="${TEAMS_APP_ID:-}" \
     LOG_LEVEL="${LOG_LEVEL}" \
-    PYTHONPATH="/home/site/wwwroot:/home/site/wwwroot/src:/home/site/wwwroot/.python_packages/lib/site-packages" \
-    SCM_DO_BUILD_DURING_DEPLOYMENT="false" \
-    WEBSITE_RUN_FROM_PACKAGE="1" >/dev/null
+    PYTHONPATH="/home/site/wwwroot:/home/site/wwwroot/src" \
+    SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
+    WEBSITE_RUN_FROM_PACKAGE="0" >/dev/null
 
 az webapp config set \
   --resource-group "${AZURE_RESOURCE_GROUP}" \
   --name "${AZURE_WEBAPP_NAME}" \
-  --startup-file "gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:\$PORT --timeout 600 --access-logfile '-' --error-logfile '-' --chdir app-service main:app" >/dev/null
+  --startup-file "python3 -m gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:\$PORT --timeout 600 --access-logfile - --error-logfile - --chdir app-service main:app" >/dev/null
 
 for function_app in "${AZURE_INDEXER_FUNCTION_NAME}" "${AZURE_INCIDENTS_FUNCTION_NAME}"; do
   az functionapp config appsettings set \
@@ -74,8 +74,9 @@ for function_app in "${AZURE_INDEXER_FUNCTION_NAME}" "${AZURE_INCIDENTS_FUNCTION
       INDEXER_API_BASE_URL="${INDEXER_API_BASE_URL}" \
       LOG_LEVEL="${LOG_LEVEL}" \
       PYTHONPATH="/home/site/wwwroot:/home/site/wwwroot/src:/home/site/wwwroot/.python_packages/lib/site-packages" \
-      SCM_DO_BUILD_DURING_DEPLOYMENT="false" \
-      WEBSITE_RUN_FROM_PACKAGE="1" >/dev/null
+      SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
+      ENABLE_ORYX_BUILD="true" \
+      AzureWebJobsFeatureFlags="EnableWorkerIndexing" >/dev/null
 done
 
 echo "App settings configuradas"

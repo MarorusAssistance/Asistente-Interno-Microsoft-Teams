@@ -24,7 +24,8 @@ echo "  /api/health/deep OK"
 echo "Chat smoke test:"
 PAYLOAD_FILE="${ROOT_DIR}/.artifacts/smoke-chat.json"
 mkdir -p "${ROOT_DIR}/.artifacts"
-"${PYTHON_CMD[@]}" - "${PAYLOAD_FILE}" <<'PY'
+PAYLOAD_FILE_NATIVE="$(native_path "${PAYLOAD_FILE}")"
+"${PYTHON_CMD[@]}" - "${PAYLOAD_FILE_NATIVE}" <<'PY'
 from pathlib import Path
 import json
 import sys

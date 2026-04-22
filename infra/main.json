@@ -1,0 +1,801 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.42.1.51946",
+      "templateHash": "9308651568294147108"
+    }
+  },
+  "parameters": {
+    "projectName": {
+      "type": "string"
+    },
+    "environmentName": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "postgresAdminUser": {
+      "type": "string"
+    },
+    "postgresAdminPassword": {
+      "type": "securestring"
+    },
+    "postgresDatabaseName": {
+      "type": "string"
+    },
+    "openAiApiKey": {
+      "type": "securestring"
+    },
+    "chatModel": {
+      "type": "string"
+    },
+    "embeddingModel": {
+      "type": "string"
+    },
+    "embeddingDimensions": {
+      "type": "int"
+    },
+    "adminApiKey": {
+      "type": "securestring"
+    },
+    "appSharedSecret": {
+      "type": "securestring"
+    },
+    "microsoftAppId": {
+      "type": "string"
+    },
+    "microsoftAppPassword": {
+      "type": "securestring"
+    },
+    "allowedOrigins": {
+      "type": "array",
+      "defaultValue": []
+    },
+    "enableApplicationInsights": {
+      "type": "bool",
+      "defaultValue": true
+    }
+  },
+  "variables": {
+    "projectSlug": "[toLower(replace(parameters('projectName'), '_', '-'))]",
+    "envSlug": "[toLower(replace(parameters('environmentName'), '_', '-'))]",
+    "baseName": "[format('{0}-{1}', variables('projectSlug'), variables('envSlug'))]",
+    "webAppPlanName": "[take(format('{0}-plan', variables('baseName')), 40)]",
+    "webAppName": "[take(format('{0}-web', variables('baseName')), 60)]",
+    "functionsPlanName": "[take(format('{0}-func-plan', variables('baseName')), 40)]",
+    "indexerFunctionName": "[take(format('{0}-indexer', variables('baseName')), 60)]",
+    "incidentsFunctionName": "[take(format('{0}-incidents', variables('baseName')), 60)]",
+    "storageAccountName": "[toLower(take(format('st{0}', uniqueString(resourceGroup().id, parameters('projectName'), parameters('environmentName'))), 24))]",
+    "postgresServerName": "[take(format('{0}-pg', variables('baseName')), 63)]",
+    "postgresHost": "[format('{0}.postgres.database.azure.com', variables('postgresServerName'))]",
+    "databaseUrl": "[format('postgresql+psycopg://{0}:{1}@{2}:5432/{3}?sslmode=require', parameters('postgresAdminUser'), uriComponent(parameters('postgresAdminPassword')), variables('postgresHost'), parameters('postgresDatabaseName'))]",
+    "webAppHostname": "[format('{0}.azurewebsites.net', variables('webAppName'))]",
+    "indexerFunctionHostname": "[format('{0}.azurewebsites.net', variables('indexerFunctionName'))]",
+    "incidentsFunctionHostname": "[format('{0}.azurewebsites.net', variables('incidentsFunctionName'))]",
+    "botEndpoint": "[format('https://{0}/api/messages', variables('webAppHostname'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-storage', variables('baseName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "storageAccountName": {
+            "value": "[variables('storageAccountName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "13729200775375326495"
+            }
+          },
+          "parameters": {
+            "storageAccountName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-05-01",
+              "name": "[parameters('storageAccountName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "allowBlobPublicAccess": false,
+                "minimumTlsVersion": "TLS1_2",
+                "supportsHttpsTrafficOnly": true,
+                "accessTier": "Hot"
+              }
+            }
+          ],
+          "outputs": {
+            "storageAccountName": {
+              "type": "string",
+              "value": "[parameters('storageAccountName')]"
+            },
+            "storageAccountId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+            },
+            "connectionString": {
+              "type": "string",
+              "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-insights', variables('baseName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "baseName": {
+            "value": "[variables('baseName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "enableApplicationInsights": {
+            "value": "[parameters('enableApplicationInsights')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "1125305229176703646"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "enableApplicationInsights": {
+              "type": "bool"
+            }
+          },
+          "resources": [
+            {
+              "condition": "[parameters('enableApplicationInsights')]",
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2023-09-01",
+              "name": "[take(format('{0}-law', parameters('baseName')), 63)]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": 30
+              }
+            },
+            {
+              "condition": "[parameters('enableApplicationInsights')]",
+              "type": "Microsoft.Insights/components",
+              "apiVersion": "2020-02-02",
+              "name": "[take(format('{0}-appi', parameters('baseName')), 260)]",
+              "location": "[parameters('location')]",
+              "kind": "web",
+              "properties": {
+                "Application_Type": "web",
+                "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', take(format('{0}-law', parameters('baseName')), 63))]",
+                "IngestionMode": "LogAnalytics"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', take(format('{0}-law', parameters('baseName')), 63))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "connectionString": {
+              "type": "string",
+              "value": "[if(parameters('enableApplicationInsights'), reference(resourceId('Microsoft.Insights/components', take(format('{0}-appi', parameters('baseName')), 260)), '2020-02-02').ConnectionString, '')]"
+            },
+            "appInsightsName": {
+              "type": "string",
+              "value": "[if(parameters('enableApplicationInsights'), take(format('{0}-appi', parameters('baseName')), 260), '')]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-postgres', variables('baseName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "serverName": {
+            "value": "[variables('postgresServerName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "administratorLogin": {
+            "value": "[parameters('postgresAdminUser')]"
+          },
+          "administratorLoginPassword": {
+            "value": "[parameters('postgresAdminPassword')]"
+          },
+          "databaseName": {
+            "value": "[parameters('postgresDatabaseName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "1542863045161856176"
+            }
+          },
+          "parameters": {
+            "serverName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "administratorLogin": {
+              "type": "string"
+            },
+            "administratorLoginPassword": {
+              "type": "securestring"
+            },
+            "databaseName": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+              "apiVersion": "2024-08-01",
+              "name": "[parameters('serverName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_B1ms",
+                "tier": "Burstable"
+              },
+              "properties": {
+                "version": "16",
+                "administratorLogin": "[parameters('administratorLogin')]",
+                "administratorLoginPassword": "[parameters('administratorLoginPassword')]",
+                "availabilityZone": "1",
+                "createMode": "Create",
+                "backup": {
+                  "backupRetentionDays": 7,
+                  "geoRedundantBackup": "Disabled"
+                },
+                "highAvailability": {
+                  "mode": "Disabled"
+                },
+                "maintenanceWindow": {
+                  "customWindow": "Disabled",
+                  "dayOfWeek": 0,
+                  "startHour": 0,
+                  "startMinute": 0
+                },
+                "network": {
+                  "publicNetworkAccess": "Enabled"
+                },
+                "storage": {
+                  "storageSizeGB": 32
+                },
+                "authConfig": {
+                  "activeDirectoryAuth": "Disabled",
+                  "passwordAuth": "Enabled"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+              "apiVersion": "2024-08-01",
+              "name": "[format('{0}/{1}', parameters('serverName'), parameters('databaseName'))]",
+              "properties": {
+                "charset": "UTF8",
+                "collation": "en_US.utf8"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('serverName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers/configurations",
+              "apiVersion": "2024-08-01",
+              "name": "[format('{0}/{1}', parameters('serverName'), 'azure.extensions')]",
+              "properties": {
+                "value": "vector",
+                "source": "user-override"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('serverName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+              "apiVersion": "2024-08-01",
+              "name": "[format('{0}/{1}', parameters('serverName'), 'AllowAzureServices')]",
+              "properties": {
+                "startIpAddress": "0.0.0.0",
+                "endIpAddress": "0.0.0.0"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('serverName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "serverName": {
+              "type": "string",
+              "value": "[parameters('serverName')]"
+            },
+            "databaseName": {
+              "type": "string",
+              "value": "[parameters('databaseName')]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-app-service', variables('baseName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "planName": {
+            "value": "[variables('webAppPlanName')]"
+          },
+          "webAppName": {
+            "value": "[variables('webAppName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "allowedOrigins": {
+            "value": "[join(parameters('allowedOrigins'), ',')]"
+          },
+          "appSettings": {
+            "value": "[concat(createArray(createObject('name', 'APP_ENV', 'value', parameters('environmentName')), createObject('name', 'APP_NAME', 'value', 'internal-assistant-mvp'), createObject('name', 'DATABASE_URL', 'value', variables('databaseUrl')), createObject('name', 'LLM_PROVIDER', 'value', 'openai'), createObject('name', 'EMBEDDINGS_PROVIDER', 'value', 'openai'), createObject('name', 'OPENAI_API_KEY', 'value', parameters('openAiApiKey')), createObject('name', 'CHAT_MODEL', 'value', parameters('chatModel')), createObject('name', 'EMBEDDING_MODEL', 'value', parameters('embeddingModel')), createObject('name', 'EMBEDDING_DIMENSIONS', 'value', string(parameters('embeddingDimensions'))), createObject('name', 'ADMIN_API_KEY', 'value', parameters('adminApiKey')), createObject('name', 'APP_SHARED_SECRET', 'value', parameters('appSharedSecret')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Resources/deployments', format('{0}-insights', variables('baseName'))), '2025-04-01').outputs.connectionString.value), createObject('name', 'LOG_LEVEL', 'value', 'INFO')), createArray(createObject('name', 'ALLOWED_ORIGINS', 'value', join(parameters('allowedOrigins'), ',')), createObject('name', 'BOT_ENDPOINT', 'value', variables('botEndpoint')), createObject('name', 'CUSTOM_INCIDENTS_API_BASE_URL', 'value', format('https://{0}/api', variables('incidentsFunctionHostname'))), createObject('name', 'INDEXER_API_BASE_URL', 'value', format('https://{0}/api', variables('indexerFunctionHostname'))), createObject('name', 'MICROSOFT_APP_ID', 'value', parameters('microsoftAppId')), createObject('name', 'MICROSOFT_APP_PASSWORD', 'value', parameters('microsoftAppPassword')), createObject('name', 'PYTHONPATH', 'value', '/home/site/wwwroot:/home/site/wwwroot/src:/home/site/wwwroot/.python_packages/lib/site-packages'), createObject('name', 'WEBSITE_RUN_FROM_PACKAGE', 'value', '0'), createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'true')))]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "5464890262853531865"
+            }
+          },
+          "parameters": {
+            "planName": {
+              "type": "string"
+            },
+            "webAppName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "allowedOrigins": {
+              "type": "string"
+            },
+            "appSettings": {
+              "type": "array"
+            }
+          },
+          "variables": {
+            "copy": [
+              {
+                "name": "normalizedAppSettings",
+                "count": "[length(parameters('appSettings'))]",
+                "input": {
+                  "name": "[parameters('appSettings')[copyIndex('normalizedAppSettings')].name]",
+                  "value": "[string(parameters('appSettings')[copyIndex('normalizedAppSettings')].value)]"
+                }
+              }
+            ],
+            "allowedOriginsArray": "[if(empty(parameters('allowedOrigins')), createArray(), split(parameters('allowedOrigins'), ','))]",
+            "startupCommand": "python3 -m gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT --timeout 600 --access-logfile - --error-logfile - --chdir app-service main:app"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2023-12-01",
+              "name": "[parameters('planName')]",
+              "location": "[parameters('location')]",
+              "kind": "linux",
+              "sku": {
+                "name": "B1",
+                "tier": "Basic",
+                "capacity": 1
+              },
+              "properties": {
+                "reserved": true
+              }
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2023-12-01",
+              "name": "[parameters('webAppName')]",
+              "location": "[parameters('location')]",
+              "kind": "app,linux",
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+                "httpsOnly": true,
+                "siteConfig": {
+                  "linuxFxVersion": "PYTHON|3.12",
+                  "healthCheckPath": "/api/health",
+                  "ftpsState": "Disabled",
+                  "minTlsVersion": "1.2",
+                  "cors": {
+                    "allowedOrigins": "[variables('allowedOriginsArray')]"
+                  },
+                  "appCommandLine": "[variables('startupCommand')]",
+                  "appSettings": "[variables('normalizedAppSettings')]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "webAppName": {
+              "type": "string",
+              "value": "[parameters('webAppName')]"
+            },
+            "defaultHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2023-12-01').defaultHostName]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', format('{0}-insights', variables('baseName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-functions', variables('baseName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "planName": {
+            "value": "[variables('functionsPlanName')]"
+          },
+          "indexerFunctionName": {
+            "value": "[variables('indexerFunctionName')]"
+          },
+          "incidentsFunctionName": {
+            "value": "[variables('incidentsFunctionName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "storageConnectionString": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-storage', variables('baseName'))), '2025-04-01').outputs.connectionString.value]"
+          },
+          "appSettings": {
+            "value": "[concat(createArray(createObject('name', 'APP_ENV', 'value', parameters('environmentName')), createObject('name', 'APP_NAME', 'value', 'internal-assistant-mvp'), createObject('name', 'DATABASE_URL', 'value', variables('databaseUrl')), createObject('name', 'LLM_PROVIDER', 'value', 'openai'), createObject('name', 'EMBEDDINGS_PROVIDER', 'value', 'openai'), createObject('name', 'OPENAI_API_KEY', 'value', parameters('openAiApiKey')), createObject('name', 'CHAT_MODEL', 'value', parameters('chatModel')), createObject('name', 'EMBEDDING_MODEL', 'value', parameters('embeddingModel')), createObject('name', 'EMBEDDING_DIMENSIONS', 'value', string(parameters('embeddingDimensions'))), createObject('name', 'ADMIN_API_KEY', 'value', parameters('adminApiKey')), createObject('name', 'APP_SHARED_SECRET', 'value', parameters('appSharedSecret')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Resources/deployments', format('{0}-insights', variables('baseName'))), '2025-04-01').outputs.connectionString.value), createObject('name', 'LOG_LEVEL', 'value', 'INFO')), createArray(createObject('name', 'CUSTOM_INCIDENTS_API_BASE_URL', 'value', format('https://{0}/api', variables('incidentsFunctionHostname'))), createObject('name', 'INDEXER_API_BASE_URL', 'value', format('https://{0}/api', variables('indexerFunctionHostname'))), createObject('name', 'PYTHONPATH', 'value', '/home/site/wwwroot:/home/site/wwwroot/src:/home/site/wwwroot/.python_packages/lib/site-packages'), createObject('name', 'WEBSITE_RUN_FROM_PACKAGE', 'value', '0'), createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'true'), createObject('name', 'ENABLE_ORYX_BUILD', 'value', 'true')))]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "16959954520260939300"
+            }
+          },
+          "parameters": {
+            "planName": {
+              "type": "string"
+            },
+            "indexerFunctionName": {
+              "type": "string"
+            },
+            "incidentsFunctionName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "storageConnectionString": {
+              "type": "securestring"
+            },
+            "appSettings": {
+              "type": "array"
+            }
+          },
+          "variables": {
+            "copy": [
+              {
+                "name": "normalizedAppSettings",
+                "count": "[length(parameters('appSettings'))]",
+                "input": {
+                  "name": "[parameters('appSettings')[copyIndex('normalizedAppSettings')].name]",
+                  "value": "[string(parameters('appSettings')[copyIndex('normalizedAppSettings')].value)]"
+                }
+              }
+            ],
+            "functionRuntimeSettings": [
+              {
+                "name": "FUNCTIONS_WORKER_RUNTIME",
+                "value": "python"
+              },
+              {
+                "name": "FUNCTIONS_EXTENSION_VERSION",
+                "value": "~4"
+              },
+              {
+                "name": "AzureWebJobsStorage",
+                "value": "[parameters('storageConnectionString')]"
+              }
+            ]
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2023-12-01",
+              "name": "[parameters('planName')]",
+              "location": "[parameters('location')]",
+              "kind": "linux",
+              "sku": {
+                "name": "B1",
+                "tier": "Basic",
+                "capacity": 1
+              },
+              "properties": {
+                "reserved": true
+              }
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2023-12-01",
+              "name": "[parameters('indexerFunctionName')]",
+              "location": "[parameters('location')]",
+              "kind": "functionapp,linux",
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+                "httpsOnly": true,
+                "siteConfig": {
+                  "alwaysOn": true,
+                  "linuxFxVersion": "PYTHON|3.12",
+                  "ftpsState": "Disabled",
+                  "minTlsVersion": "1.2",
+                  "appSettings": "[concat(variables('functionRuntimeSettings'), variables('normalizedAppSettings'))]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2023-12-01",
+              "name": "[parameters('incidentsFunctionName')]",
+              "location": "[parameters('location')]",
+              "kind": "functionapp,linux",
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+                "httpsOnly": true,
+                "siteConfig": {
+                  "alwaysOn": true,
+                  "linuxFxVersion": "PYTHON|3.12",
+                  "ftpsState": "Disabled",
+                  "minTlsVersion": "1.2",
+                  "appSettings": "[concat(variables('functionRuntimeSettings'), variables('normalizedAppSettings'))]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "indexerFunctionName": {
+              "type": "string",
+              "value": "[parameters('indexerFunctionName')]"
+            },
+            "indexerDefaultHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', parameters('indexerFunctionName')), '2023-12-01').defaultHostName]"
+            },
+            "incidentsFunctionName": {
+              "type": "string",
+              "value": "[parameters('incidentsFunctionName')]"
+            },
+            "incidentsDefaultHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', parameters('incidentsFunctionName')), '2023-12-01').defaultHostName]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', format('{0}-insights', variables('baseName')))]",
+        "[resourceId('Microsoft.Resources/deployments', format('{0}-storage', variables('baseName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-bot', variables('baseName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "botName": {
+            "value": "[take(format('{0}-bot', variables('baseName')), 42)]"
+          },
+          "microsoftAppId": {
+            "value": "[parameters('microsoftAppId')]"
+          },
+          "endpoint": {
+            "value": "[variables('botEndpoint')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "13595526592871245133"
+            }
+          },
+          "parameters": {
+            "botName": {
+              "type": "string"
+            },
+            "microsoftAppId": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.BotService/botServices",
+              "apiVersion": "2022-09-15",
+              "name": "[parameters('botName')]",
+              "location": "global",
+              "kind": "azurebot",
+              "sku": {
+                "name": "F0"
+              },
+              "properties": {
+                "displayName": "[parameters('botName')]",
+                "endpoint": "[parameters('endpoint')]",
+                "msaAppId": "[parameters('microsoftAppId')]",
+                "msaAppType": "SingleTenant",
+                "msaAppTenantId": "[tenant().tenantId]",
+                "isStreamingSupported": false,
+                "publicNetworkAccess": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.BotService/botServices/channels",
+              "apiVersion": "2022-09-15",
+              "name": "[format('{0}/{1}', parameters('botName'), 'MsTeamsChannel')]",
+              "location": "global",
+              "properties": {
+                "channelName": "MsTeamsChannel"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.BotService/botServices', parameters('botName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "botName": {
+              "type": "string",
+              "value": "[parameters('botName')]"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "webAppName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-app-service', variables('baseName'))), '2025-04-01').outputs.webAppName.value]"
+    },
+    "webAppHostname": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-app-service', variables('baseName'))), '2025-04-01').outputs.defaultHostName.value]"
+    },
+    "indexerFunctionName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-functions', variables('baseName'))), '2025-04-01').outputs.indexerFunctionName.value]"
+    },
+    "indexerFunctionHostname": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-functions', variables('baseName'))), '2025-04-01').outputs.indexerDefaultHostName.value]"
+    },
+    "incidentsFunctionName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-functions', variables('baseName'))), '2025-04-01').outputs.incidentsFunctionName.value]"
+    },
+    "incidentsFunctionHostname": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-functions', variables('baseName'))), '2025-04-01').outputs.incidentsDefaultHostName.value]"
+    },
+    "postgresServerName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-postgres', variables('baseName'))), '2025-04-01').outputs.serverName.value]"
+    },
+    "storageAccountName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-storage', variables('baseName'))), '2025-04-01').outputs.storageAccountName.value]"
+    },
+    "botName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-bot', variables('baseName'))), '2025-04-01').outputs.botName.value]"
+    },
+    "applicationInsightsConnectionString": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('{0}-insights', variables('baseName'))), '2025-04-01').outputs.connectionString.value]"
+    }
+  }
+}
