@@ -13,7 +13,7 @@ from internal_assistant.config import get_settings
 from internal_assistant.llm import LLMProvider, build_default_provider
 from internal_assistant.observability import get_logger
 from internal_assistant.repositories import ConversationRepository, FeedbackRepository, IncidentRepository, MessageRepository, RetrievalLogRepository
-from internal_assistant.rag import HybridRetriever
+from internal_assistant.rag import DEFAULT_RETRIEVAL_CONFIG, HybridRetriever, RetrievalConfig
 from internal_assistant.schemas import ChatRequest, ChatResponse, FeedbackCreate, SourceSnippet
 
 logger = get_logger(__name__)
@@ -31,6 +31,66 @@ class ChatService:
         self.retrieval_logs = RetrievalLogRepository(session)
         self.retriever = HybridRetriever(session)
 
+    def classify_intent(self, message: str, state: dict | None = None) -> str:
+        return detect_intent(message, state)
+
+    def retrieve(
+        self,
+        message: str,
+        retrieval_config: RetrievalConfig | None = None,
+    ) -> list:
+        query_embedding = self.llm_provider.embed_texts([message])[0]
+        return self.retriever.search(message, query_embedding, config=retrieval_config or DEFAULT_RETRIEVAL_CONFIG)
+
+    def calculate_confidence(self, retrieved: list) -> float:
+        return retrieved[0].final_score if retrieved else 0.0
+
+    def generate_answer(self, question: str, retrieved_chunks: list, conversation_state: dict) -> tuple[Any, list[dict[str, Any]]]:
+        context_chunks = [
+            {
+                "chunk_id": item.chunk_id,
+                "content": item.content,
+                "source_type": item.source_type,
+                "source_id": item.source_id,
+                "metadata": item.metadata,
+            }
+            for item in retrieved_chunks
+        ]
+        decision = self.llm_provider.generate_chat_response(
+            question=question,
+            context_chunks=context_chunks,
+            conversation_state=conversation_state,
+        )
+        return decision, context_chunks
+
+    def simulate_chat(
+        self,
+        request: ChatRequest,
+        *,
+        state: dict | None = None,
+        retrieval_config: RetrievalConfig | None = None,
+    ) -> tuple[ChatResponse, dict[str, Any], dict[str, Any]]:
+        current_state = dict(state or {})
+        intent = self.classify_intent(request.message, current_state)
+        if current_state.get("pending_incident_draft"):
+            raise ValueError("El flujo de evaluacion solo soporta preguntas/respuestas del asistente RAG")
+        if intent in {"feedback", "register_incident", "confirm_incident"}:
+            intent = "question_answer"
+
+        response = self._handle_qa_flow(
+            conversation_id=request.conversation_id or 0,
+            state=current_state,
+            request=request,
+            intent=intent,
+            user_message_id=0,
+            started_at=time.perf_counter(),
+            write_retrieval_logs=False,
+            retrieval_config=retrieval_config,
+        )
+        meta = response.pop("_meta", {})
+        next_state = response.pop("_state")
+        return ChatResponse(**response), next_state, meta
+
     def handle_chat(self, request: ChatRequest) -> ChatResponse:
         started_at = time.perf_counter()
         conversation = self.conversations.get_or_create(
@@ -40,7 +100,7 @@ class ChatService:
             teams_conversation_id=request.teams_conversation_id,
         )
         state = dict(conversation.state or {})
-        intent = detect_intent(request.message, state)
+        intent = self.classify_intent(request.message, state)
         user_message = self.messages.create(conversation.id, "user", request.message, intent=intent)
 
         if intent == "feedback":
@@ -175,11 +235,13 @@ class ChatService:
         intent: str,
         user_message_id: int,
         started_at: float,
+        *,
+        write_retrieval_logs: bool = True,
+        retrieval_config: RetrievalConfig | None = None,
     ) -> dict[str, Any]:
         clarification_attempts = int(state.get("clarification_attempts", 0))
-        query_embedding = self.llm_provider.embed_texts([request.message])[0]
-        retrieved = self.retriever.search(request.message, query_embedding, limit=5)
-        confidence = retrieved[0].final_score if retrieved else 0.0
+        retrieved = self.retrieve(request.message, retrieval_config=retrieval_config)
+        confidence = self.calculate_confidence(retrieved)
 
         if not retrieved or confidence < self.settings.retrieval_confidence_threshold:
             clarification_attempts += 1
@@ -190,15 +252,17 @@ class ChatService:
                     "No tengo evidencia suficiente en el indice para responder con seguridad. "
                     "Si quieres, puedo ayudarte a registrar una incidencia no resuelta."
                 )
-                self._write_retrieval_log(
-                    conversation_id=conversation_id,
-                    message_id=user_message_id,
-                    query=request.message,
-                    intent=intent,
-                    answer=answer,
-                    confidence=confidence,
-                    latency_ms=int((time.perf_counter() - started_at) * 1000),
-                )
+                latency_ms = int((time.perf_counter() - started_at) * 1000)
+                if write_retrieval_logs:
+                    self._write_retrieval_log(
+                        conversation_id=conversation_id,
+                        message_id=user_message_id,
+                        query=request.message,
+                        intent=intent,
+                        answer=answer,
+                        confidence=confidence,
+                        latency_ms=latency_ms,
+                    )
                 return {
                     "conversation_id": conversation_id,
                     "answer": answer,
@@ -209,6 +273,14 @@ class ChatService:
                     "should_offer_incident": True,
                     "adaptive_card": None,
                     "fallback_text": answer,
+                    "_meta": {
+                        "retrieved": retrieved,
+                        "confidence": confidence,
+                        "decision": None,
+                        "context_chunks": [],
+                        "actual_behavior": "abstain_and_offer_incident_registration",
+                        "latency_ms": latency_ms,
+                    },
                     "_state": state,
                 }
 
@@ -216,15 +288,17 @@ class ChatService:
                 "Necesito un poco mas de detalle para responder con seguridad. "
                 f"Puedes concretar el sistema, el proceso o el error exacto? Intento de aclaracion {clarification_attempts} de 2."
             )
-            self._write_retrieval_log(
-                conversation_id=conversation_id,
-                message_id=user_message_id,
-                query=request.message,
-                intent=intent,
-                answer=full_answer,
-                confidence=confidence,
-                latency_ms=int((time.perf_counter() - started_at) * 1000),
-            )
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            if write_retrieval_logs:
+                self._write_retrieval_log(
+                    conversation_id=conversation_id,
+                    message_id=user_message_id,
+                    query=request.message,
+                    intent=intent,
+                    answer=full_answer,
+                    confidence=confidence,
+                    latency_ms=latency_ms,
+                )
             return {
                 "conversation_id": conversation_id,
                 "answer": full_answer,
@@ -235,6 +309,14 @@ class ChatService:
                 "should_offer_incident": False,
                 "adaptive_card": None,
                 "fallback_text": full_answer,
+                "_meta": {
+                    "retrieved": retrieved,
+                    "confidence": confidence,
+                    "decision": None,
+                    "context_chunks": [],
+                    "actual_behavior": "ask_clarification",
+                    "latency_ms": latency_ms,
+                },
                 "_state": state,
             }
 
@@ -249,21 +331,7 @@ class ChatService:
             )
             for item in retrieved
         ]
-        context_chunks = [
-            {
-                "chunk_id": item.chunk_id,
-                "content": item.content,
-                "source_type": item.source_type,
-                "source_id": item.source_id,
-                "metadata": item.metadata,
-            }
-            for item in retrieved
-        ]
-        decision = self.llm_provider.generate_chat_response(
-            question=request.message,
-            context_chunks=context_chunks,
-            conversation_state=state,
-        )
+        decision, context_chunks = self.generate_answer(request.message, retrieved, state)
         state["clarification_attempts"] = 0
         state["offer_incident"] = False
         related_incidents = [
@@ -278,21 +346,23 @@ class ChatService:
             )
         ]
         answer = decision.answer
-        self.retrieval_logs.create(
-            conversation_id=conversation_id,
-            message_id=user_message_id,
-            query=request.message,
-            detected_intent=intent,
-            retrieved_chunk_ids=[item.chunk_id for item in retrieved],
-            retrieved_source_ids=[item.source_id for item in retrieved],
-            scores={item.chunk_id: item.final_score for item in retrieved},
-            confidence_score=confidence,
-            was_answered=not decision.needs_clarification,
-            tokens_input_estimated=len(request.message.split()) + sum(len(item.content.split()) for item in retrieved),
-            tokens_output_estimated=len(answer.split()),
-            latency_ms=int((time.perf_counter() - started_at) * 1000),
-            answer=answer,
-        )
+        latency_ms = int((time.perf_counter() - started_at) * 1000)
+        if write_retrieval_logs:
+            self.retrieval_logs.create(
+                conversation_id=conversation_id,
+                message_id=user_message_id,
+                query=request.message,
+                detected_intent=intent,
+                retrieved_chunk_ids=[item.chunk_id for item in retrieved],
+                retrieved_source_ids=[item.source_id for item in retrieved],
+                scores={item.chunk_id: item.final_score for item in retrieved},
+                confidence_score=confidence,
+                was_answered=not decision.needs_clarification,
+                tokens_input_estimated=len(request.message.split()) + sum(len(item.content.split()) for item in retrieved),
+                tokens_output_estimated=len(answer.split()),
+                latency_ms=latency_ms,
+                answer=answer,
+            )
         return {
             "conversation_id": conversation_id,
             "answer": answer,
@@ -303,6 +373,14 @@ class ChatService:
             "should_offer_incident": decision.should_offer_incident,
             "adaptive_card": build_sources_card(answer, [source.model_dump() for source in sources], related_incidents),
             "fallback_text": self._build_sources_fallback(answer, sources),
+            "_meta": {
+                "retrieved": retrieved,
+                "confidence": confidence,
+                "decision": decision,
+                "context_chunks": context_chunks,
+                "actual_behavior": "ask_clarification" if decision.needs_clarification else "answer_with_sources",
+                "latency_ms": latency_ms,
+            },
             "_state": state,
         }
 

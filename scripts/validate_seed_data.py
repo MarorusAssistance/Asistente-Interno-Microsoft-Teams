@@ -12,8 +12,8 @@ def run_validation(data_dir: Path = DATA_DIR) -> int:
     print(f"Tickets resueltos: {summary.resolved_tickets}")
     print(f"Tickets no resueltos: {summary.unresolved_tickets}")
     print(f"Documentos: {summary.documents}")
-    print(f"Distribución documentos: {summary.document_distribution}")
-    print("Validación: OK")
+    print(f"Distribucion documentos: {summary.document_distribution}")
+    print("Validacion: OK")
     return 0
 
 
@@ -21,7 +21,7 @@ def main() -> int:
     try:
         return run_validation()
     except SeedDataValidationError as exc:
-        print(f"Validación: ERROR - {exc}", file=sys.stderr)
+        print(f"Validacion: ERROR - {exc}", file=sys.stderr)
         return 1
 
 

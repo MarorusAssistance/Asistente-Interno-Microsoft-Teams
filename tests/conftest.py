@@ -106,7 +106,7 @@ class FakeRetriever:
     def __init__(self, results=None):
         self.results = results or []
 
-    def search(self, query, query_embedding, limit=5):
+    def search(self, query, query_embedding, limit=5, config=None):
         return self.results[:limit]
 
 

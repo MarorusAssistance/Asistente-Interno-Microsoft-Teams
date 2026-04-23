@@ -29,6 +29,16 @@ def test_validate_seed_data_accepts_expected_dataset():
     assert summary.documents == 20
 
 
+def test_generated_seed_content_does_not_contain_mojibake_sequences():
+    ticket = build_seed_tickets()[0]
+    document = build_seed_documents()[0]
+
+    assert "Ã" not in ticket["title"]
+    assert "Ã" not in ticket["description"]
+    assert "Ã" not in document["title"]
+    assert "Ã" not in document["content"]
+
+
 def test_validate_seed_data_detects_wrong_ticket_count(tmp_path):
     tickets = build_seed_tickets()[:-1]
     documents = build_seed_documents()

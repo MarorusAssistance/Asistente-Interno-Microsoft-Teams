@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,37 @@ class RetrievedChunk:
     final_score: float = 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class RetrievalConfig:
+    top_k: int = 5
+    vector_weight: float = 0.70
+    text_weight: float = 0.30
+    vector_candidates: int = 15
+    text_candidates: int = 15
+
+    def normalized(self) -> "RetrievalConfig":
+        top_k = max(1, int(self.top_k))
+        vector_candidates = max(top_k, int(self.vector_candidates))
+        text_candidates = max(top_k, int(self.text_candidates))
+        vector_weight = max(0.0, float(self.vector_weight))
+        text_weight = max(0.0, float(self.text_weight))
+        total_weight = vector_weight + text_weight
+        if total_weight <= 0:
+            vector_weight = 0.70
+            text_weight = 0.30
+            total_weight = 1.0
+        return RetrievalConfig(
+            top_k=top_k,
+            vector_weight=vector_weight / total_weight,
+            text_weight=text_weight / total_weight,
+            vector_candidates=vector_candidates,
+            text_candidates=text_candidates,
+        )
+
+
+DEFAULT_RETRIEVAL_CONFIG = RetrievalConfig()
+
+
 def _normalize(scores: list[float]) -> list[float]:
     if not scores:
         return []
@@ -33,9 +64,19 @@ class HybridRetriever:
     def __init__(self, session: Session):
         self.chunk_repository = ChunkRepository(session)
 
-    def search(self, query: str, query_embedding: list[float], limit: int = 5) -> list[RetrievedChunk]:
-        vector_rows = self.chunk_repository.vector_search(query_embedding, limit=15)
-        text_rows = self.chunk_repository.text_search(query, limit=15)
+    def search(
+        self,
+        query: str,
+        query_embedding: list[float],
+        limit: int | None = None,
+        config: RetrievalConfig | None = None,
+    ) -> list[RetrievedChunk]:
+        effective = (config or DEFAULT_RETRIEVAL_CONFIG).normalized()
+        if limit is not None:
+            effective = replace(effective, top_k=max(1, int(limit))).normalized()
+
+        vector_rows = self.chunk_repository.vector_search(query_embedding, limit=effective.vector_candidates)
+        text_rows = self.chunk_repository.text_search(query, limit=effective.text_candidates)
 
         merged: dict[int, RetrievedChunk] = {}
         for row in vector_rows:
@@ -67,7 +108,9 @@ class HybridRetriever:
         text_norm = _normalize([chunk.text_score for chunk in ordered])
 
         for idx, chunk in enumerate(ordered):
-            chunk.final_score = 0.70 * vector_norm[idx] + 0.30 * text_norm[idx]
+            chunk.final_score = (
+                effective.vector_weight * vector_norm[idx] + effective.text_weight * text_norm[idx]
+            )
 
         ordered.sort(key=lambda item: item.final_score, reverse=True)
-        return ordered[:limit]
+        return ordered[: effective.top_k]

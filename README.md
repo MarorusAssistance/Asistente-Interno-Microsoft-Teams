@@ -134,6 +134,7 @@ Los workflows usan `azure/login` con OIDC.
 - `docs/architecture.md`
 - `docs/cost-control.md`
 - `docs/demo-script.md`
+- `docs/rag-evaluation.md`
 
 ## Limitaciones
 
@@ -147,3 +148,27 @@ Los workflows usan `azure/login` con OIDC.
 ```bash
 python -m uv run pytest -q
 ```
+
+## Evaluacion RAG
+
+El repo incluye un framework de evaluacion reproducible bajo `evaluation/` para medir retrieval, calidad de respuesta, cobertura de fuentes, abstencion y robustez adversarial.
+
+Comandos principales:
+
+```bash
+python scripts/run_rag_eval.py --provider mock
+python scripts/run_rag_eval.py --provider openai --include-adversarial
+python scripts/compare_retrieval_configs.py
+```
+
+Variables utiles en `.env`:
+
+- `EVAL_USE_LLM_JUDGE=false`
+- `EVAL_DATASET_PATH=evaluation/datasets/rag_eval_questions.json`
+- `EVAL_OUTPUT_DIR=evaluation/reports`
+- `EVAL_TOP_K=5`
+- `EVAL_VECTOR_WEIGHT=0.70`
+- `EVAL_TEXT_WEIGHT=0.30`
+- `EVAL_PROVIDER=mock`
+
+Mas detalle en `docs/rag-evaluation.md`.

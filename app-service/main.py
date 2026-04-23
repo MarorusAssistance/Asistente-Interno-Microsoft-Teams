@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -32,7 +33,15 @@ from internal_assistant.teams import coerce_activity_input
 configure_logging()
 settings = get_settings()
 logger = get_logger(__name__)
-app = FastAPI(title="internal-assistant-mvp", version="0.1.0")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    assert_runtime_settings(settings, require_bot=settings.app_env.strip().lower() in {"dev", "demo"})
+    yield
+
+
+app = FastAPI(title="internal-assistant-mvp", version="0.1.0", lifespan=lifespan)
 adapter = BotFrameworkAdapter(
     BotFrameworkAdapterSettings(
         settings.microsoft_app_id,
@@ -98,11 +107,6 @@ adapter.on_turn_error = on_turn_error
 
 
 DbSession = Annotated[Session, Depends(get_session)]
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    assert_runtime_settings(settings, require_bot=settings.app_env.strip().lower() in {"dev", "demo"})
 
 
 @app.get("/api/health")

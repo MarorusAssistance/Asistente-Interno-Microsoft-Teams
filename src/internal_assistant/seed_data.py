@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,6 +48,25 @@ def _iso_datetime(offset_days: int, *, hours: int = 0) -> str:
 
 def _join_paragraphs(*paragraphs: str) -> str:
     return "\n\n".join(paragraph.strip() for paragraph in paragraphs if paragraph.strip())
+
+
+def _repair_mojibake_text(value: str) -> str:
+    if not any(marker in value for marker in ("Ã", "Â", "â")):
+        return value
+    try:
+        return value.encode("latin-1").decode("utf-8")
+    except UnicodeError:
+        return value
+
+
+def _repair_mojibake(value: Any) -> Any:
+    if isinstance(value, str):
+        return _repair_mojibake_text(value)
+    if isinstance(value, list):
+        return [_repair_mojibake(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _repair_mojibake(item) for key, item in value.items()}
+    return value
 
 
 def _document_content(*, title: str, department: str, system: str, objective: str, controls: list[str], escalation: str) -> str:
@@ -470,7 +490,7 @@ def build_seed_documents() -> list[dict]:
                 "updated_at": updated_at,
             }
         )
-    return documents
+    return [_repair_mojibake(item) for item in documents]
 
 
 def build_seed_tickets() -> list[dict]:
@@ -782,7 +802,7 @@ def build_seed_tickets() -> list[dict]:
         )
         identifier += 1
 
-    return tickets
+    return [_repair_mojibake(item) for item in tickets]
 
 
 def write_seed_files(data_dir: Path = DATA_DIR) -> tuple[Path, Path]:
@@ -817,7 +837,7 @@ def load_seed_data(data_dir: Path = DATA_DIR) -> tuple[list[dict], list[dict]]:
         raise SeedDataValidationError("El dataset de tickets debe ser una lista JSON")
     if not isinstance(documents, list):
         raise SeedDataValidationError("El dataset de documentos debe ser una lista JSON")
-    return tickets, documents
+    return _repair_mojibake(tickets), _repair_mojibake(documents)
 
 
 def _parse_iso8601(value: str, *, field_name: str) -> datetime:
