@@ -52,6 +52,10 @@
       ]
     }
   ],
+  "defaultInstallScope": "personal",
+  "defaultGroupCapability": {
+    "team": "bot"
+  },
   "permissions": [
     "identity",
     "messageTeamMembers"
