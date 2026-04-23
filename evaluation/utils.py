@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from internal_assistant.config import get_settings
 from internal_assistant.llm import MockLLMProvider, OpenAICompatibleProvider, OpenAIProvider
 from internal_assistant.models import Document, Incident
 from internal_assistant.schemas import ChatRequest, ChatResponse
@@ -199,8 +200,9 @@ def select_provider(provider_name: str):
     normalized = provider_name.strip().lower()
     if normalized in {"openai-compatible", "local"}:
         normalized = "openai_compatible"
+    settings = get_settings()
     if normalized == "mock":
-        return MockLLMProvider()
+        return MockLLMProvider(embedding_dimensions=settings.embedding_dimensions)
     if normalized == "openai":
         return OpenAIProvider()
     if normalized == "openai_compatible":

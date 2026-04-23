@@ -8,10 +8,15 @@ from internal_assistant.schemas.chat import AssistantDecision
 
 
 class MockLLMProvider(LLMProvider):
-    def __init__(self, clarification_phrase: str = "Necesito un poco mas de detalle para responder con seguridad.") -> None:
+    def __init__(
+        self,
+        clarification_phrase: str = "Necesito un poco mas de detalle para responder con seguridad.",
+        *,
+        embedding_dimensions: int = 512,
+    ) -> None:
         self.settings = get_settings()
         self.clarification_phrase = clarification_phrase
-        self.embedding_dimensions = 512
+        self.embedding_dimensions = embedding_dimensions
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []

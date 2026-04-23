@@ -22,7 +22,7 @@ class OpenAICompatibleProvider(LLMProvider):
             api_key=settings.llm_api_key or "local-dev-key",
             base_url=settings.llm_base_url,
             max_retries=0,
-            timeout=120.0,
+            timeout=settings.llm_timeout_seconds,
         )
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:

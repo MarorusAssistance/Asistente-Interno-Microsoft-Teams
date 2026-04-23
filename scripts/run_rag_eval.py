@@ -43,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-k", type=int, default=int(os.getenv("EVAL_TOP_K", "5")))
     parser.add_argument("--vector-weight", type=float, default=float(os.getenv("EVAL_VECTOR_WEIGHT", "0.70")))
     parser.add_argument("--text-weight", type=float, default=float(os.getenv("EVAL_TEXT_WEIGHT", "0.30")))
+    parser.add_argument("--max-concurrency", type=int, default=int(os.getenv("EVAL_MAX_CONCURRENCY", "1")))
     return parser
 
 
@@ -61,6 +62,7 @@ def main() -> int:
         include_adversarial=args.include_adversarial,
         include_ablation=args.include_ablation,
         use_llm_judge=args.use_llm_judge,
+        max_concurrency=args.max_concurrency,
     )
     paths = report.get("report_paths", {})
     print(f"Reporte JSON: {paths.get('json', '')}")

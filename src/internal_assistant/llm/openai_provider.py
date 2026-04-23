@@ -17,7 +17,7 @@ class OpenAIProvider(LLMProvider):
     def __init__(self) -> None:
         settings = get_settings()
         self.settings = settings
-        self.client = OpenAI(api_key=settings.openai_api_key, max_retries=0, timeout=120.0)
+        self.client = OpenAI(api_key=settings.openai_api_key, max_retries=0, timeout=settings.llm_timeout_seconds)
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []

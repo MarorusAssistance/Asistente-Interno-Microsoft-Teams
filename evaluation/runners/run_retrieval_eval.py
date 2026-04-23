@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from pathlib import Path
 from typing import Any
 
+from internal_assistant.config import get_settings
 from internal_assistant.chat.service import ChatService
 from internal_assistant.db import session_scope
 from internal_assistant.rag import RetrievalConfig
@@ -28,6 +30,44 @@ def _ordered_retrieved_source_ids(retrieved) -> list[str]:
             seen.add(key)
             ordered.append(key)
     return ordered
+
+
+def _evaluate_retrieval_question(
+    *,
+    question,
+    provider_name: str,
+    retrieval_config: RetrievalConfig,
+    service_class,
+) -> list[dict[str, Any]]:
+    from evaluation.utils import expand_question, select_provider
+
+    with session_scope() as session:
+        llm_provider = select_provider(provider_name)
+        service = service_class(session, llm_provider=llm_provider)
+        rows: list[dict[str, Any]] = []
+        for turn in expand_question(question):
+            started_at = time.perf_counter()
+            retrieved = service.retrieve(turn.message, retrieval_config=retrieval_config)
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            retrieved_keys = _ordered_retrieved_source_ids(retrieved)
+            row = {
+                "turn_id": turn.turn_id,
+                "question_id": turn.turn_id,
+                "question": turn.message,
+                "category": turn.category,
+                "expected_behavior": turn.expected_behavior,
+                "expected_source_ids": list(turn.expected_source_ids),
+                "expected_source_types": list(turn.expected_source_types),
+                "retrieved_chunk_ids": [item.chunk_id for item in retrieved],
+                "retrieved_source_ids": retrieved_keys,
+                "retrieved_source_types": sorted(retrieved_source_types(retrieved)),
+                "top_score": float(retrieved[0].final_score) if retrieved else 0.0,
+                "latency_ms": latency_ms,
+            }
+            row["hit_at_5"] = bool(set(turn.expected_source_ids).intersection(retrieved_keys))
+            row["issue"] = "No recupero ninguna fuente esperada" if turn.expected_source_ids and not row["hit_at_5"] else "OK"
+            rows.append(row)
+        return rows
 
 
 def evaluate_retrieval(
@@ -86,6 +126,7 @@ def run_retrieval_eval(
     retrieval_config: RetrievalConfig | None = None,
     session=None,
     questions=None,
+    max_concurrency: int | None = None,
     write_reports: bool = True,
     service_class=ChatService,
 ) -> dict[str, Any]:
@@ -93,8 +134,37 @@ def run_retrieval_eval(
     loaded_questions = questions or load_questions(dataset_path)
     owns_session = session is None
     provider = select_provider(provider_name)
+    effective_concurrency = max(1, max_concurrency or get_settings().eval_max_concurrency)
 
-    if owns_session:
+    if owns_session and effective_concurrency > 1:
+        with ThreadPoolExecutor(max_workers=effective_concurrency) as executor:
+            futures = [
+                executor.submit(
+                    _evaluate_retrieval_question,
+                    question=question,
+                    provider_name=provider_name,
+                    retrieval_config=effective_config,
+                    service_class=service_class,
+                )
+                for question in loaded_questions
+            ]
+            rows: list[dict[str, Any]] = []
+            for future in as_completed(futures):
+                rows.extend(future.result())
+        result = {
+            "rows": rows,
+            "aggregate_metrics": compute_retrieval_metrics(rows),
+            "summary": {},
+            "recommendations": [],
+        }
+        result["summary"] = {
+            "Questions evaluated": len(rows),
+            "Retrieval hit@5": round(float(result["aggregate_metrics"]["hit_at_5"]), 4),
+            "MRR": round(float(result["aggregate_metrics"]["mrr"]), 4),
+            "Average latency ms": round(float(result["aggregate_metrics"]["average_latency_ms"]), 2),
+        }
+        result["recommendations"] = retrieval_recommendations(result["aggregate_metrics"])
+    elif owns_session:
         with session_scope() as managed_session:
             result = evaluate_retrieval(
                 managed_session,

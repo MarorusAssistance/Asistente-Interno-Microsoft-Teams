@@ -37,6 +37,7 @@ def run_full_eval(
     include_adversarial: bool = False,
     include_ablation: bool = False,
     use_llm_judge: bool = False,
+    max_concurrency: int | None = None,
     adversarial_dataset_path: str | Path | None = None,
     session=None,
     write_reports: bool = True,
@@ -51,6 +52,7 @@ def run_full_eval(
         retrieval_config=effective_config,
         session=session,
         questions=None,
+        max_concurrency=max_concurrency,
         write_reports=False,
         service_class=service_class,
     )
@@ -62,6 +64,7 @@ def run_full_eval(
         session=session,
         questions=None,
         use_llm_judge=use_llm_judge,
+        max_concurrency=max_concurrency,
         write_reports=False,
         service_class=service_class,
     )
@@ -77,6 +80,7 @@ def run_full_eval(
             session=session,
             questions=None,
             use_llm_judge=use_llm_judge,
+            max_concurrency=max_concurrency,
             write_reports=False,
             service_class=service_class,
         )

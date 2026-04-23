@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     chat_model: str = Field(default="gpt-4o-mini", alias="CHAT_MODEL")
     embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
     embedding_dimensions: int = Field(default=512, alias="EMBEDDING_DIMENSIONS")
+    llm_timeout_seconds: float = Field(default=120.0, alias="LLM_TIMEOUT_SECONDS")
     admin_api_key: str = Field(default="change-this-admin-key", alias="ADMIN_API_KEY")
     app_shared_secret: str = Field(default="change-this-shared-secret", alias="APP_SHARED_SECRET")
     applicationinsights_connection_string: str = Field(
@@ -45,6 +46,7 @@ class Settings(BaseSettings):
     teams_app_id: str = Field(default="", alias="TEAMS_APP_ID")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     retrieval_confidence_threshold: float = Field(default=0.58, alias="RETRIEVAL_CONFIDENCE_THRESHOLD")
+    eval_max_concurrency: int = Field(default=1, alias="EVAL_MAX_CONCURRENCY")
 
     @property
     def bot_app_id(self) -> str:
