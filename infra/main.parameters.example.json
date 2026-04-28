@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "projectName": {
+      "value": "internal-assistant"
+    },
+    "environmentName": {
+      "value": "demo"
+    },
+    "location": {
+      "value": "westeurope"
+    },
+    "postgresAdminUser": {
+      "value": "pgadmininternal"
+    },
+    "postgresAdminPassword": {
+      "value": "<set-me>"
+    },
+    "postgresDatabaseName": {
+      "value": "assistant"
+    },
+    "openAiApiKey": {
+      "value": "<set-me>"
+    },
+    "chatModel": {
+      "value": "gpt-4o-mini"
+    },
+    "embeddingModel": {
+      "value": "text-embedding-3-small"
+    },
+    "embeddingDimensions": {
+      "value": 512
+    },
+    "adminApiKey": {
+      "value": "<set-me>"
+    },
+    "appSharedSecret": {
+      "value": "<set-me>"
+    },
+    "microsoftAppId": {
+      "value": "<set-me>"
+    },
+    "microsoftAppPassword": {
+      "value": "<set-me>"
+    },
+    "allowedOrigins": {
+      "value": [
+        "https://teams.microsoft.com"
+      ]
+    },
+    "enableApplicationInsights": {
+      "value": true
+    }
+  }
+}

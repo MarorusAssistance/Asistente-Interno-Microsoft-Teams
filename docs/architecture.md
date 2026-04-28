@@ -1,39 +1,75 @@
 # Arquitectura
 
+## Objetivo arquitectonico
+
+El proyecto modela un asistente interno con una idea central: la fuente de verdad y el indice RAG no son la misma cosa. Los tickets y documentos viven en PostgreSQL como datos operativos; el indice usa chunks, embeddings y full-text search para responder preguntas con latencia y relevancia razonables.
+
 ## Componentes
 
-- `app-service`: FastAPI principal con endpoints para chat, Bot Framework, tickets, documentos, feedback y health.
-- `custom-incidents-api-function`: sistema fuente simulado de incidencias. Es la unica pieza que escribe en `incidents`.
-- `indexer-function`: toma documentos e incidencias, genera chunks, embeddings y el indice hibrido.
-- `PostgreSQL + pgvector`: persistencia de dominio, chunks, conversaciones, feedback y logs.
+- `app-service`
+  - FastAPI principal
+  - expone `/api/chat`, `/api/messages`, health checks, feedback y endpoints de consulta
+  - orquesta el flujo conversacional, el retrieval y la creacion de incidencias
+- `custom-incidents-api-function`
+  - sistema fuente simulado para incidencias
+  - representa la capa donde se crean y actualizan tickets
+- `indexer-function`
+  - genera chunks, embeddings y actualiza el indice
+  - reutiliza la misma logica que los scripts locales de reindexado
+- `src/internal_assistant`
+  - libreria compartida con configuracion, providers LLM, RAG, runtime, cards y repositorios
+- `PostgreSQL + pgvector`
+  - guarda incidents, documents, chunks, conversations, messages, feedback y retrieval logs
+- `evaluation/`
+  - datasets, metrics, judges y runners para evaluar retrieval y calidad de respuesta
 
-## Flujo principal de preguntas
+## Flujo principal de pregunta y respuesta
 
-1. El usuario envia una pregunta.
-2. `app-service` detecta el intent y consulta el indice.
-3. Se hace retrieval hibrido con vector search + full-text search.
-4. El LLM responde solo con evidencia recuperada.
-5. Si no hay evidencia suficiente, el bot pide aclaracion hasta 2 veces.
-6. Si sigue sin poder responder, propone registrar una incidencia.
+1. El usuario pregunta desde `/api/chat` o desde Teams.
+2. `app-service` clasifica el intent y genera embeddings de consulta.
+3. `HybridRetriever` combina vector search y full-text search.
+4. El provider LLM recibe solo el contexto recuperado.
+5. El asistente responde con fuentes o pide aclaracion.
+6. Si no hay evidencia suficiente tras dos aclaraciones, ofrece registrar incidencia.
 
 ## Flujo de registro de incidencia
 
-1. El usuario expresa que quiere registrar una incidencia.
-2. El bot recopila campos minimos y guarda un borrador en `conversations.state`.
-3. Tras la confirmacion, `app-service` llama a `custom-incidents-api-function`.
-4. La Function persiste la incidencia y devuelve el registro creado.
-5. `app-service` llama a `indexer-function` para indexar ese ticket.
-6. El bot confirma al usuario que la incidencia fue creada e indexada.
+1. El usuario acepta registrar un caso.
+2. `app-service` recopila los campos minimos.
+3. La incidencia se envia a `custom-incidents-api-function`.
+4. La fuente simula la creacion del ticket y lo persiste.
+5. `app-service` llama a `indexer-function`.
+6. El indice se actualiza para que el caso pueda aparecer en retrieval posterior.
 
-## Modulos compartidos
+## Separacion entre fuente e indice
 
-- `config`: configuracion central con Pydantic Settings.
-- `db`: engine, sesiones y base declarativa.
-- `models`: tablas SQLAlchemy.
-- `schemas`: contratos Pydantic.
-- `rag`: chunking, scoring y retrieval.
-- `llm`: interfaz de provider, OpenAI, Azure OpenAI preparado y mock.
-- `chat`: orquestacion, intents y flujo conversacional.
-- `cards`: payloads sencillos de Adaptive Cards con fallback textual.
-- `observability`: logs estructurados y helpers de metricas.
-- `security`: validacion de secretos compartidos y API keys.
+Esta separacion es una decision importante del proyecto:
+
+- `incidents` y `documents` representan conocimiento operativo persistente
+- `chunks` representa una vista derivada para retrieval
+
+La demo muestra asi un patron mas realista que un simple bot que solo consulta un vector store sin distincion entre origen e indice.
+
+## Runtime local y runtime cloud
+
+### Local
+
+- PostgreSQL en Docker o instalado en host
+- FastAPI y Functions ejecutables con `uv run uvicorn`
+- provider `mock`, `openai` o `openai_compatible`
+
+### Cloud
+
+- Azure App Service para `app-service`
+- dos Azure Functions para incidents e indexer
+- PostgreSQL Flexible Server con `pgvector`
+- Azure Bot y Teams custom app para la ruta conversacional corporativa
+
+## Observabilidad y evaluacion
+
+- logs JSON a stdout
+- `retrieval_logs` en PostgreSQL
+- health checks simples y profundos
+- framework de evaluacion RAG con reportes JSON y Markdown
+
+La observabilidad es basica, pero suficiente para mostrar que el sistema no solo responde, sino que tambien puede medirse y depurarse.

@@ -5,11 +5,14 @@ description = "MVP tecnico de asistente interno para Microsoft Teams con FastAPI
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "aiohttp>=3.11.11",
   "alembic>=1.14.1",
+  "azure-monitor-opentelemetry>=1.8.7",
   "azure-functions>=1.21.3",
   "botbuilder-core>=4.16.2",
   "botbuilder-schema>=4.16.2",
   "fastapi>=0.115.6",
+  "gunicorn>=23.0.0",
   "httpx>=0.28.1",
   "openai>=1.59.7",
   "pgvector>=0.3.6",

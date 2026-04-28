@@ -1,17 +1,30 @@
 from __future__ import annotations
 
-import httpx
+import sys
+import time
 
-from internal_assistant.config import get_settings
+from internal_assistant.db import session_scope
+from internal_assistant.functions import rebuild_index
 
 
-def main() -> None:
-    settings = get_settings()
-    headers = {"x-admin-api-key": settings.admin_api_key}
-    response = httpx.post(f"{settings.indexer_api_base_url}/index/rebuild", headers=headers, timeout=120)
-    response.raise_for_status()
-    print(response.json())
+def main() -> int:
+    started_at = time.perf_counter()
+    try:
+        with session_scope() as session:
+            result = rebuild_index(session)
+    except Exception as exc:
+        print(f"Rebuild: ERROR - {exc}", file=sys.stderr)
+        return 1
+
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    print(f"Incidents read: {result['incidents_read']}")
+    print(f"Documents read: {result['documents_read']}")
+    print(f"Chunks generated: {result['total_chunks']}")
+    print(f"Chunks with embeddings: {result['chunks_with_embeddings']}")
+    print(f"Embedding dimensions: {result['embedding_dimensions']}")
+    print(f"Tiempo total: {elapsed_ms} ms")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

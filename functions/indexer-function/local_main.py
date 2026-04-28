@@ -15,6 +15,11 @@ app = FastAPI(title="indexer-function", version="0.1.0")
 DbSession = Annotated[Session, Depends(get_session)]
 
 
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok", "service": "indexer-function"}
+
+
 @app.post("/index/rebuild", dependencies=[Depends(verify_admin_api_key)])
 def rebuild(session: DbSession) -> dict:
     return rebuild_index(session)

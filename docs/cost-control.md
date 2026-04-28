@@ -1,15 +1,53 @@
 # Control de costes
 
-## Principios del MVP
+## Recursos que generan coste
 
-- Embeddings de 512 dimensiones con `text-embedding-3-small`.
-- Top 5 global tras retrieval hibrido, sin reranking avanzado.
-- Dataset seed local y funciones desacopladas para apagar o escalar por separado.
-- Logging util pero acotado: se guardan ids y scores, no el texto completo de todos los chunks.
+- Azure App Service Plan Linux
+- Azure Functions
+- Azure Database for PostgreSQL Flexible Server
+- Storage Account
+- Application Insights y Log Analytics si se dejan activos
+
+## Estrategia recomendada para demo
+
+1. Desarrollar casi todo en local.
+2. Levantar cloud solo para validacion final o demo.
+3. Arrancar PostgreSQL antes de la sesion.
+4. Ejecutar health checks.
+5. Hacer la demo.
+6. Parar PostgreSQL al terminar.
+
+## Comandos utiles
+
+```bash
+./scripts/start_postgres_azure.sh
+./scripts/smoke_test_cloud.sh
+./scripts/stop_postgres_azure.sh
+```
+
+Azure CLI equivalente:
+
+```bash
+az postgres flexible-server start --resource-group <rg> --name <server>
+az postgres flexible-server stop --resource-group <rg> --name <server>
+```
+
+## Notas practicas
+
+- parar PostgreSQL reduce compute, pero storage y backups pueden seguir generando coste
+- Flexible Server puede permanecer parado hasta 7 dias antes de que Azure lo reactive
+- si quieres coste cero total, borra el Resource Group
+- en esta fase no compensa activar Azure OpenAI ni SKUs superiores
+
+## SKUs razonables para demo
+
+- App Service Plan `B1`
+- PostgreSQL `Standard_B1ms`
+- Storage `Standard_LRS`
+- Functions en Consumption
 
 ## Recomendaciones
 
-- Cachear consultas frecuentes en una fase siguiente.
-- Limitar reconstrucciones completas del indice y priorizar indexado incremental.
-- Ajustar el umbral de confianza para reducir llamadas innecesarias al LLM.
-- Migrar a Azure OpenAI cuando se quiera consolidar control de red, compliance y tenancy.
+- crea budget alerts
+- evita alta disponibilidad y private endpoints en esta fase
+- reconstruye el indice solo cuando cambie el corpus o registres nuevas incidencias

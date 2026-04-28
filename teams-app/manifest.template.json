@@ -1,0 +1,64 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "0.2.0",
+  "id": "REPLACE-TEAMS-APP-ID",
+  "packageName": "com.logiassist.demo",
+  "developer": {
+    "name": "Portfolio Demo",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "name": {
+    "short": "LogiAssist",
+    "full": "LogiAssist - Asistente interno de incidencias"
+  },
+  "description": {
+    "short": "Asistente interno ficticio para documentacion privada e incidencias.",
+    "full": "Asistente interno ficticio para consultar documentacion privada, revisar incidencias y registrar nuevos casos operativos o de seguridad."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#005A9C",
+  "bots": [
+    {
+      "botId": "REPLACE-MICROSOFT-APP-ID",
+      "scopes": [
+        "personal",
+        "team"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team"
+          ],
+          "commands": [
+            {
+              "title": "Consultar documentacion",
+              "description": "Consulta procedimientos, politicas e incidencias internas"
+            },
+            {
+              "title": "Registrar incidencia",
+              "description": "Inicia el flujo de registro de una incidencia operativa o de seguridad"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "defaultInstallScope": "personal",
+  "defaultGroupCapability": {
+    "team": "bot"
+  },
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": []
+}

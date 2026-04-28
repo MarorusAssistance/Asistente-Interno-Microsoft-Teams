@@ -12,11 +12,17 @@ import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
 
+from internal_assistant.config import get_settings
+
 
 revision = "0001_initial_schema"
 down_revision = None
 branch_labels = None
 depends_on = None
+
+
+def _embedding_dimensions() -> int:
+    return get_settings().embedding_dimensions
 
 
 def upgrade() -> None:
@@ -112,7 +118,7 @@ def upgrade() -> None:
         sa.Column("chunk_index", sa.Integer(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("content_hash", sa.String(length=64), nullable=False),
-        sa.Column("embedding", Vector(512), nullable=True),
+        sa.Column("embedding", Vector(_embedding_dimensions()), nullable=True),
         sa.Column("full_text_tsvector", postgresql.TSVECTOR(), nullable=True),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
