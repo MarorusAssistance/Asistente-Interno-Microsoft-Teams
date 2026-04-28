@@ -1,49 +1,75 @@
 # Arquitectura
 
+## Objetivo arquitectonico
+
+El proyecto modela un asistente interno con una idea central: la fuente de verdad y el indice RAG no son la misma cosa. Los tickets y documentos viven en PostgreSQL como datos operativos; el indice usa chunks, embeddings y full-text search para responder preguntas con latencia y relevancia razonables.
+
 ## Componentes
 
-- `app-service`: FastAPI principal. Expone `/api/chat`, `/api/messages`, health checks, tickets, documentos y feedback.
-- `custom-incidents-api-function`: sistema fuente simulado para incidencias.
-- `indexer-function`: genera chunks, embeddings y mantiene el indice.
-- `src/internal_assistant`: libreria compartida con configuracion, dominio, RAG, seguridad, cards y utilidades cloud/Teams.
-- `PostgreSQL + pgvector`: persistencia principal.
-- `teams-app`: manifiesto y empaquetado de la custom app.
-- `infra`: Bicep modular para Azure.
+- `app-service`
+  - FastAPI principal
+  - expone `/api/chat`, `/api/messages`, health checks, feedback y endpoints de consulta
+  - orquesta el flujo conversacional, el retrieval y la creacion de incidencias
+- `custom-incidents-api-function`
+  - sistema fuente simulado para incidencias
+  - representa la capa donde se crean y actualizan tickets
+- `indexer-function`
+  - genera chunks, embeddings y actualiza el indice
+  - reutiliza la misma logica que los scripts locales de reindexado
+- `src/internal_assistant`
+  - libreria compartida con configuracion, providers LLM, RAG, runtime, cards y repositorios
+- `PostgreSQL + pgvector`
+  - guarda incidents, documents, chunks, conversations, messages, feedback y retrieval logs
+- `evaluation/`
+  - datasets, metrics, judges y runners para evaluar retrieval y calidad de respuesta
 
-## Flujo principal
+## Flujo principal de pregunta y respuesta
 
 1. El usuario pregunta desde `/api/chat` o desde Teams.
-2. `app-service` detecta el intent.
-3. Se generan embeddings y retrieval hibrido.
-4. El provider LLM responde solo con evidencia recuperada.
-5. Si falta evidencia, el sistema pide aclaracion.
-6. Si sigue faltando evidencia, propone registrar incidencia.
+2. `app-service` clasifica el intent y genera embeddings de consulta.
+3. `HybridRetriever` combina vector search y full-text search.
+4. El provider LLM recibe solo el contexto recuperado.
+5. El asistente responde con fuentes o pide aclaracion.
+6. Si no hay evidencia suficiente tras dos aclaraciones, ofrece registrar incidencia.
 
-## Registro de incidencia
+## Flujo de registro de incidencia
 
-1. El bot recopila campos minimos.
-2. `app-service` llama a `custom-incidents-api-function`.
-3. La Function crea el ticket en PostgreSQL.
-4. `app-service` dispara `indexer-function`.
-5. El ticket se chunkifica e indexa.
+1. El usuario acepta registrar un caso.
+2. `app-service` recopila los campos minimos.
+3. La incidencia se envia a `custom-incidents-api-function`.
+4. La fuente simula la creacion del ticket y lo persiste.
+5. `app-service` llama a `indexer-function`.
+6. El indice se actualiza para que el caso pueda aparecer en retrieval posterior.
 
-## Runtime y configuracion
+## Separacion entre fuente e indice
 
-- `config.py` centraliza App Settings para local y cloud.
-- `runtime.py` valida configuracion por entorno y construye health checks avanzados.
-- `teams.py` centraliza transformaciones de payloads de tarjetas y renderizado del manifiesto.
+Esta separacion es una decision importante del proyecto:
 
-## Azure
+- `incidents` y `documents` representan conocimiento operativo persistente
+- `chunks` representa una vista derivada para retrieval
 
-- Web App Linux Python 3.12 para `app-service`
-- Dos Function Apps Linux Consumption
-- Storage Account comun para Functions
-- PostgreSQL Flexible Server con allowlist de `vector`
-- Application Insights opcional
-- Azure Bot con canal Teams
+La demo muestra asi un patron mas realista que un simple bot que solo consulta un vector store sin distincion entre origen e indice.
 
-## Observabilidad
+## Runtime local y runtime cloud
 
-- Logs JSON a stdout en local y cloud
+### Local
+
+- PostgreSQL en Docker o instalado en host
+- FastAPI y Functions ejecutables con `uv run uvicorn`
+- provider `mock`, `openai` o `openai_compatible`
+
+### Cloud
+
+- Azure App Service para `app-service`
+- dos Azure Functions para incidents e indexer
+- PostgreSQL Flexible Server con `pgvector`
+- Azure Bot y Teams custom app para la ruta conversacional corporativa
+
+## Observabilidad y evaluacion
+
+- logs JSON a stdout
 - `retrieval_logs` en PostgreSQL
-- Integracion opcional con Application Insights cuando existe `APPLICATIONINSIGHTS_CONNECTION_STRING`
+- health checks simples y profundos
+- framework de evaluacion RAG con reportes JSON y Markdown
+
+La observabilidad es basica, pero suficiente para mostrar que el sistema no solo responde, sino que tambien puede medirse y depurarse.

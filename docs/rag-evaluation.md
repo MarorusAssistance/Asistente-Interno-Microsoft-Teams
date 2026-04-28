@@ -1,18 +1,18 @@
 # Evaluacion RAG
 
-## Objetivo
+## Por que evaluar el RAG
 
-La evaluacion RAG permite medir si el asistente:
+El asistente no se da por valido solo porque responda. Hay que comprobar:
 
-- recupera las fuentes correctas;
-- responde con informacion sustentada;
-- cita fuentes validas;
-- se abstiene cuando no hay evidencia;
-- resiste casos ambiguos o maliciosos.
+- si recupera las fuentes adecuadas
+- si responde con el comportamiento esperado
+- si cita bien
+- si se abstiene cuando debe
+- si resiste preguntas ambiguas o maliciosas
 
-## Metricas
+## Que metricas se usan
 
-Retrieval:
+### Retrieval
 
 - `hit_at_1`
 - `hit_at_3`
@@ -22,7 +22,7 @@ Retrieval:
 - `expected_source_coverage`
 - `source_type_match_rate`
 
-Respuesta:
+### Respuesta
 
 - `answer_generated`
 - `answer_contains_required_terms`
@@ -31,14 +31,14 @@ Respuesta:
 - `answer_uses_only_retrieved_context`
 - `answer_expected_behavior_match`
 
-Fuentes:
+### Fuentes
 
 - `citation_present_rate`
 - `citation_source_validity_rate`
 - `citation_coverage_rate`
 - `unsupported_answer_rate`
 
-Abstencion:
+### Abstencion
 
 - `abstention_precision`
 - `abstention_recall`
@@ -47,56 +47,61 @@ Abstencion:
 - `clarification_rate_when_required`
 - `incident_registration_offer_rate`
 
-## Ejecucion local
+## Como ejecutar la evaluacion
 
-Con mock:
-
-```bash
-python scripts/run_rag_eval.py --provider mock
-```
-
-Con OpenAI y casos adversariales:
+### Smoke test barato
 
 ```bash
-python scripts/run_rag_eval.py --provider openai --include-adversarial
+python -m uv run python scripts/run_rag_eval.py --provider mock
 ```
 
-Comparacion de configuraciones de retrieval:
+### OpenAI
 
 ```bash
-python scripts/compare_retrieval_configs.py
+python -m uv run python scripts/run_rag_eval.py --provider openai --include-adversarial
 ```
 
-## Interpretacion
+### Provider local compatible
 
-- Si `hit_at_5` es bajo, el problema principal esta en retrieval.
-- Si `hit_at_5` es razonable pero `citation_coverage_rate` es baja, el asistente encuentra contexto pero no lo cita bien.
-- Si `false_answer_when_should_abstain` sube, el sistema esta inventando demasiado.
-- Si `clarification_rate_when_required` baja, el flujo ambiguo esta siendo demasiado agresivo.
+```bash
+python -m uv run python scripts/run_rag_eval.py --provider openai_compatible --include-adversarial
+```
+
+### Judge LLM opcional
+
+```bash
+python -m uv run python scripts/run_rag_eval.py --provider openai --use-llm-judge
+```
+
+### Ablation de retrieval
+
+```bash
+python -m uv run python scripts/compare_retrieval_configs.py
+```
+
+## Donde quedan los resultados
+
+Los reportes se guardan en `evaluation/reports/` como archivos JSON y Markdown. No se suben automaticamente a PostgreSQL, Table Storage, Blob Storage ni a artifacts remotos.
+
+## Como interpretar los reportes
+
+- `hit_at_5` bajo suele indicar un problema primario de retrieval
+- `citation_coverage_rate` baja indica que la respuesta no esta usando o exponiendo bien las fuentes correctas
+- `false_answer_when_should_abstain` alto significa que el asistente esta inventando demasiado
+- `clarification_rate_when_required` bajo indica que el flujo ambiguo esta siendo demasiado agresivo
 
 ## LLM-as-a-judge
 
-`HeuristicJudge` es el default y no usa APIs externas. `LLMJudge` solo debe activarse cuando quieras una segunda señal semantica:
+`HeuristicJudge` es el modo por defecto y no usa APIs externas. `LLMJudge` es una segunda senal semantica util para evaluaciones manuales, pero no deberia ser obligatorio en CI.
 
-```bash
-python scripts/run_rag_eval.py --provider openai --use-llm-judge
-```
+## Como evitar gastar tokens
 
-Para evitar gasto innecesario:
-
-- usa `--provider mock` en CI;
-- activa `--use-llm-judge` solo en evaluaciones manuales;
-- revisa primero retrieval y metricas heuristicas antes de gastar tokens.
-
-## Como ampliar el dataset
-
-1. Añade una pregunta en `evaluation/datasets/rag_eval_questions.json`.
-2. Usa `expected_source_ids` con la forma `document:<id>` o `incident:<id>`.
-3. Si el caso requiere varios turnos, usa `follow_up_messages`.
-4. Si es adversarial, añádelo a `evaluation/datasets/adversarial_questions.json`.
+- usa `mock` para smoke tests
+- activa `LLMJudge` solo en evaluaciones manuales
+- en provider local compatible, ajusta timeout y concurrencia con cuidado
 
 ## Limitaciones
 
-- Las metricas heuristicas no sustituyen una revision humana.
-- `MockProvider` sirve para validar pipeline, no para medir calidad semantica real.
-- En esta version no hay reranking avanzado ni LLM local generando datasets.
+- las metricas heuristicas no sustituyen una revision humana
+- `MockProvider` valida el pipeline, pero no mide calidad semantica real
+- un benchmark solo es comparable si el provider de consulta y el indice comparten el mismo espacio de embeddings

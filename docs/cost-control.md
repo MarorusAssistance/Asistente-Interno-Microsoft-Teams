@@ -6,50 +6,48 @@
 - Azure Functions
 - Azure Database for PostgreSQL Flexible Server
 - Storage Account
-- Application Insights / Log Analytics
+- Application Insights y Log Analytics si se dejan activos
 
 ## Estrategia recomendada para demo
 
-1. Arrancar PostgreSQL:
+1. Desarrollar casi todo en local.
+2. Levantar cloud solo para validacion final o demo.
+3. Arrancar PostgreSQL antes de la sesion.
+4. Ejecutar health checks.
+5. Hacer la demo.
+6. Parar PostgreSQL al terminar.
+
+## Comandos utiles
 
 ```bash
 ./scripts/start_postgres_azure.sh
-```
-
-2. Validar health:
-
-```bash
 ./scripts/smoke_test_cloud.sh
-```
-
-3. Hacer la demo.
-4. Parar PostgreSQL:
-
-```bash
 ./scripts/stop_postgres_azure.sh
 ```
 
-## Comandos Azure CLI
+Azure CLI equivalente:
 
 ```bash
 az postgres flexible-server start --resource-group <rg> --name <server>
 az postgres flexible-server stop --resource-group <rg> --name <server>
 ```
 
-## Notas importantes
+## Notas practicas
 
-- Parar PostgreSQL reduce el coste de compute, pero storage y backups pueden seguir generando coste.
-- Azure PostgreSQL Flexible Server puede permanecer parado hasta 7 dias; despues Azure puede reiniciarlo.
-- Si quieres coste cero total, borra el Resource Group entero.
-- No actives Azure OpenAI en v0.2; OpenAI API ya cubre la demo.
-- Mantente en SKUs bajos:
-  - App Service Plan `B1`
-  - PostgreSQL `Standard_B1ms`
-  - Storage `Standard_LRS`
-  - Functions en Consumption
+- parar PostgreSQL reduce compute, pero storage y backups pueden seguir generando coste
+- Flexible Server puede permanecer parado hasta 7 dias antes de que Azure lo reactive
+- si quieres coste cero total, borra el Resource Group
+- en esta fase no compensa activar Azure OpenAI ni SKUs superiores
 
-## Recomendaciones adicionales
+## SKUs razonables para demo
 
-- Crea budget alerts en Azure Cost Management.
-- No uses alta disponibilidad ni private endpoints en esta fase.
-- Reconstruye el indice solo cuando cambie el dataset o registres incidencias nuevas.
+- App Service Plan `B1`
+- PostgreSQL `Standard_B1ms`
+- Storage `Standard_LRS`
+- Functions en Consumption
+
+## Recomendaciones
+
+- crea budget alerts
+- evita alta disponibilidad y private endpoints en esta fase
+- reconstruye el indice solo cuando cambie el corpus o registres nuevas incidencias

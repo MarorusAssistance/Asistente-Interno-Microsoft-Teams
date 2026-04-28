@@ -1,17 +1,21 @@
 # Despliegue Azure
 
+## Objetivo
+
+Publicar una demo reproducible en Azure con App Service, Azure Functions, PostgreSQL Flexible Server y Azure Bot, manteniendo costes contenidos.
+
 ## Prerrequisitos
 
-- Azure CLI autenticado con permisos sobre el Resource Group objetivo.
-- Python 3.12 y `uv`.
-- Un Resource Group existente o permiso para crearlo.
-- Una app registration para el bot con `MICROSOFT_APP_ID`, `MICROSOFT_APP_PASSWORD` y el tenant `MICROSOFT_APP_TENANT_ID`.
-- OpenAI API key valida.
+- Azure CLI autenticado
+- permisos sobre la suscripcion o el Resource Group objetivo
+- Python 3.12 y `uv`
+- app registration para el bot
+- OpenAI API key valida
 
-## Variables
+## Preparacion
 
 1. Copia `.env.azure.example` a `.env.azure`.
-2. Rellena al menos:
+2. Rellena como minimo:
 
 ```env
 PROJECT_NAME=internal-assistant
@@ -34,67 +38,20 @@ MICROSOFT_APP_TENANT_ID=<entra-tenant-id>
 TEAMS_APP_ID=<teams-app-id>
 ```
 
-## Flujo completo
-
-1. Validar login:
+## Despliegue manual
 
 ```bash
 ./scripts/azure_login_check.sh
-```
-
-2. Desplegar infraestructura:
-
-```bash
 ./scripts/deploy_infra.sh
-```
-
-3. Configurar App Settings y startup command:
-
-```bash
 ./scripts/configure_app_settings.sh
-```
-
-4. Desplegar App Service:
-
-```bash
 ./scripts/deploy_app_service.sh
-```
-
-5. Desplegar Azure Functions:
-
-```bash
 ./scripts/deploy_functions.sh
-```
-
-6. Aplicar migraciones contra PostgreSQL cloud:
-
-```bash
-export DATABASE_URL="$(python -m uv run python - <<'PY'
-from internal_assistant.runtime import build_azure_postgres_url
-import os
-print(build_azure_postgres_url(
-    server_name=os.environ["AZURE_POSTGRES_SERVER_NAME"],
-    database_name=os.environ["POSTGRES_DATABASE_NAME"],
-    admin_user=os.environ["POSTGRES_ADMIN_USER"],
-    password=os.environ["POSTGRES_ADMIN_PASSWORD"],
-))
-PY
-)"
-python -m uv run alembic upgrade head
-```
-
-7. Cargar dataset cloud:
-
-```bash
 ./scripts/seed_cloud_db.sh
 ./scripts/rebuild_cloud_index.sh
 ./scripts/check_cloud_index.sh
-```
-
-8. Smoke test:
-
-```bash
 ./scripts/smoke_test_cloud.sh
+./scripts/demo_prep.sh cloud
+./scripts/demo_health_check.sh cloud
 ```
 
 ## Health checks esperados
@@ -104,24 +61,24 @@ python -m uv run alembic upgrade head
 - `GET https://<indexer>.azurewebsites.net/api/health`
 - `GET https://<incidents>.azurewebsites.net/api/health`
 
-`/api/health/deep` valida:
+`/api/health/deep` debe confirmar:
 
 - conectividad con PostgreSQL
-- configuracion del provider
-- existencia de chunks
+- provider configurado
+- presencia de chunks
 - extension `vector`
 
-## pgvector en Azure PostgreSQL
+## Migraciones y pgvector
 
-El servidor Flexible Server queda configurado con `azure.extensions=vector`. Despues:
+Si necesitas ejecutar migraciones manuales contra la base cloud:
 
-1. Aplica migraciones.
-2. Ejecuta `CREATE EXTENSION IF NOT EXISTS vector;` usando `scripts/init_db.py` o Alembic.
-3. Verifica el indice con `./scripts/check_cloud_index.sh`.
+```bash
+python -m uv run alembic upgrade head
+```
 
-## Smoke test funcional
+El servidor Flexible Server queda preparado para `pgvector`, pero conviene verificarlo siempre con `scripts/check_cloud_index.sh`.
 
-Ejemplo de consulta cloud:
+## Prueba funcional
 
 ```bash
 curl -X POST "https://<webapp>.azurewebsites.net/api/chat" \
@@ -132,18 +89,10 @@ curl -X POST "https://<webapp>.azurewebsites.net/api/chat" \
   }'
 ```
 
-## GitHub Secrets necesarios
+## Cierre de costes tras la demo
 
-- `AZURE_CLIENT_ID`
-- `AZURE_TENANT_ID`
-- `AZURE_SUBSCRIPTION_ID`
-- `AZURE_RESOURCE_GROUP`
-- `POSTGRES_ADMIN_PASSWORD`
-- `OPENAI_API_KEY`
-- `ADMIN_API_KEY`
-- `APP_SHARED_SECRET`
-- `MICROSOFT_APP_ID`
-- `MICROSOFT_APP_PASSWORD`
-- `MICROSOFT_APP_TENANT_ID`
+```bash
+./scripts/stop_postgres_azure.sh
+```
 
-Los workflows usan `azure/login` con OIDC. No usan publish profiles.
+Si quieres coste casi cero, la opcion mas segura es borrar el Resource Group completo cuando acabes.

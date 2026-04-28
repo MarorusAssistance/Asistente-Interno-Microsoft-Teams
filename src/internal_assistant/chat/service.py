@@ -142,7 +142,12 @@ class ChatService:
         )
         self.feedback.create(payload)
         self.session.commit()
-        answer = "Gracias. He registrado tu feedback para mejorar futuras respuestas."
+        answer = (
+            "Resumen\n"
+            "Gracias. He registrado tu feedback para mejorar futuras respuestas.\n\n"
+            "Siguiente paso\n"
+            "Si quieres, puedes reformular la pregunta o pedirme otro caso parecido."
+        )
         return ChatResponse(
             conversation_id=conversation_id,
             answer=answer,
@@ -165,7 +170,7 @@ class ChatService:
             created = self._create_incident(payload.model_dump())
             self._trigger_index_incident(created["id"])
             new_state = {"clarification_attempts": 0}
-            answer = f"Incidencia creada e indexada correctamente: {created['external_id']}."
+            answer = self._format_incident_created_answer(created)
             return {
                 "conversation_id": conversation_id,
                 "answer": answer,
@@ -249,8 +254,12 @@ class ChatService:
             if clarification_attempts >= 3:
                 state["offer_incident"] = True
                 answer = (
-                    "No tengo evidencia suficiente en el indice para responder con seguridad. "
-                    "Si quieres, puedo ayudarte a registrar una incidencia no resuelta."
+                    "Resumen\n"
+                    "No tengo evidencia suficiente en el indice para responder con seguridad.\n\n"
+                    "Detalle\n"
+                    "Con la informacion recuperada no puedo darte un procedimiento fiable sin inventar pasos.\n\n"
+                    "Siguiente paso\n"
+                    "Si quieres, puedo ayudarte a registrar una incidencia no resuelta para dejar trazabilidad."
                 )
                 latency_ms = int((time.perf_counter() - started_at) * 1000)
                 if write_retrieval_logs:
@@ -285,8 +294,12 @@ class ChatService:
                 }
 
             full_answer = (
-                "Necesito un poco mas de detalle para responder con seguridad. "
-                f"Puedes concretar el sistema, el proceso o el error exacto? Intento de aclaracion {clarification_attempts} de 2."
+                "Resumen\n"
+                "Necesito un poco mas de detalle para responder con seguridad.\n\n"
+                "Detalle\n"
+                f"Indica el sistema, el proceso o el error exacto. Intento de aclaracion {clarification_attempts} de 2.\n\n"
+                "Siguiente paso\n"
+                "Por ejemplo: 'RutaNexo no cierra una ruta aprobada' o 'SafeGate rechaza un acceso temporal'."
             )
             latency_ms = int((time.perf_counter() - started_at) * 1000)
             if write_retrieval_logs:
@@ -345,7 +358,7 @@ class ChatService:
                 list({item.source_id for item in retrieved if item.source_type == "incident"})
             )
         ]
-        answer = decision.answer
+        answer = self._format_answer_for_demo(decision.answer, related_incidents=related_incidents)
         latency_ms = int((time.perf_counter() - started_at) * 1000)
         if write_retrieval_logs:
             self.retrieval_logs.create(
@@ -372,7 +385,7 @@ class ChatService:
             "clarification_attempt": 0,
             "should_offer_incident": decision.should_offer_incident,
             "adaptive_card": build_sources_card(answer, [source.model_dump() for source in sources], related_incidents),
-            "fallback_text": self._build_sources_fallback(answer, sources),
+            "fallback_text": self._build_sources_fallback(answer, sources, related_incidents),
             "_meta": {
                 "retrieved": retrieved,
                 "confidence": confidence,
@@ -384,12 +397,55 @@ class ChatService:
             "_state": state,
         }
 
-    def _build_sources_fallback(self, answer: str, sources: list[SourceSnippet]) -> str:
-        lines = [answer, "", "Fuentes:"]
-        for source in sources:
-            suffix = source.source_url or source.excerpt
-            lines.append(f"- {source.title}: {suffix}")
+    def _format_answer_for_demo(self, answer: str, *, related_incidents: list[dict] | None = None) -> str:
+        cleaned_answer = answer.strip()
+        next_step = (
+            "Si quieres, puedo ampliar el procedimiento con mas detalle."
+            if not related_incidents
+            else "Si quieres, puedo ampliar el procedimiento o revisar las incidencias relacionadas."
+        )
+        lines = ["Resumen", cleaned_answer, "", "Siguiente paso", next_step]
         return "\n".join(lines)
+
+    def _format_incident_created_answer(self, created: dict[str, Any]) -> str:
+        lines = [
+            "Resumen",
+            f"Incidencia registrada e indexada correctamente: {created['external_id']}.",
+            "",
+            "Detalle",
+            (
+                f"Titulo: {created.get('title', 'Sin titulo')} | "
+                f"Sistema: {created.get('affected_system', 'N/D')} | "
+                f"Estado: {created.get('status', 'N/D')}"
+            ),
+            "",
+            "Siguiente paso",
+            "Ya puedes usar este ticket como referencia en futuras consultas o seguir completando contexto operativo.",
+        ]
+        return "\n".join(lines)
+
+    def _build_sources_fallback(
+        self,
+        answer: str,
+        sources: list[SourceSnippet],
+        related_incidents: list[dict] | None = None,
+    ) -> str:
+        lines = [answer, "", "Fuentes consultadas"]
+        for index, source in enumerate(sources[:5], start=1):
+            lines.append(self._format_source_line(source, index=index))
+        if related_incidents:
+            lines.extend(["", "Incidencias relacionadas"])
+            for incident in related_incidents[:3]:
+                lines.append(f"- {incident['external_id']}: {incident['title']} ({incident['status']})")
+        return "\n".join(lines)
+
+    def _format_source_line(self, source: SourceSnippet, *, index: int) -> str:
+        source_type = "Documento" if source.source_type == "document" else "Incidencia"
+        title = source.title.strip() or f"{source_type} {source.source_id}"
+        detail = source.source_url or source.excerpt.strip()
+        if len(detail) > 160:
+            detail = detail[:157].rstrip() + "..."
+        return f"- [{index}] {source_type} {source.source_id} - {title}: {detail}"
 
     def _write_retrieval_log(self, *, conversation_id: int, message_id: int, query: str, intent: str, answer: str, confidence: float, latency_ms: int) -> None:
         self.retrieval_logs.create(

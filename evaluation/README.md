@@ -11,13 +11,13 @@ Este directorio contiene el framework de evaluacion del asistente:
 Flujos habituales:
 
 ```bash
-python scripts/run_rag_eval.py --provider mock
-python scripts/run_rag_eval.py --provider openai --include-adversarial
-python scripts/compare_retrieval_configs.py
+python -m uv run python scripts/run_rag_eval.py --provider mock
+python -m uv run python scripts/run_rag_eval.py --provider openai --include-adversarial
+python -m uv run python scripts/compare_retrieval_configs.py
 ```
 
 Notas:
 
 - `MockProvider` sirve para smoke tests y CI sin llamadas externas.
-- `LLMJudge` es opcional y solo debe activarse cuando quieras una señal semantica adicional.
+- `LLMJudge` es opcional y solo debe activarse cuando quieras una senal semantica adicional.
 - Los datasets usan IDs compuestos `document:<id>` e `incident:<id>` para alinear fuentes esperadas con la base real.

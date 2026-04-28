@@ -59,7 +59,8 @@ def test_chat_response_with_sources_uses_retrieved_chunks(monkeypatch):
     response = service.handle_chat(ChatRequest(user_id="u1", message="Como solicito acceso temporal?"))
 
     assert response.sources
-    assert "Fuentes:" in response.fallback_text
+    assert response.answer.startswith("Resumen")
+    assert "Fuentes consultadas" in response.fallback_text
 
 
 def test_register_unresolved_incident_flow(monkeypatch):
@@ -88,6 +89,7 @@ def test_register_unresolved_incident_flow(monkeypatch):
     assert "Resumen de la incidencia" in confirm_summary.answer
     assert created_response.created_ticket_external_id == "INC-00321"
     assert created_response.created_ticket_id == 321
+    assert "Incidencia registrada" in created_response.answer
 
 
 def test_feedback_useful_and_not_useful_messages_are_stored(monkeypatch):
@@ -97,7 +99,7 @@ def test_feedback_useful_and_not_useful_messages_are_stored(monkeypatch):
     useful = service.handle_chat(ChatRequest(user_id="u1", message="util gracias"))
     not_useful = service.handle_chat(ChatRequest(conversation_id=useful.conversation_id, user_id="u1", message="no util no me ayudo"))
 
-    assert useful.answer.startswith("Gracias")
+    assert useful.answer.startswith("Resumen")
     assert len(service.feedback.items) == 2
 
 
