@@ -7,8 +7,10 @@ import httpx
 from sqlalchemy.orm import Session
 
 from internal_assistant.cards import build_feedback_card, build_incident_confirmation_card, build_sources_card
+from internal_assistant.chat.evidence import assess_evidence, build_policy_clarification_answer
 from internal_assistant.chat.incident_draft import build_confirmation_text, extract_incident_fields, missing_fields, validate_draft
 from internal_assistant.chat.intents import detect_intent
+from internal_assistant.chat.memory import build_message_memory_text, summarize_message
 from internal_assistant.config import get_settings
 from internal_assistant.llm import LLMProvider, build_default_provider
 from internal_assistant.llm.common import build_chat_messages
@@ -21,9 +23,16 @@ from internal_assistant.observability.tracing import (
     set_span_attributes,
     user_hash,
 )
-from internal_assistant.repositories import ConversationRepository, FeedbackRepository, IncidentRepository, MessageRepository, RetrievalLogRepository
+from internal_assistant.repositories import (
+    ConversationMemoryRepository,
+    ConversationRepository,
+    FeedbackRepository,
+    IncidentRepository,
+    MessageRepository,
+    RetrievalLogRepository,
+)
 from internal_assistant.rag import DEFAULT_RETRIEVAL_CONFIG, HybridRetriever, RetrievalConfig
-from internal_assistant.schemas import ChatRequest, ChatResponse, FeedbackCreate, SourceSnippet
+from internal_assistant.schemas import ChatPlan, ChatRequest, ChatResponse, FeedbackCreate, SourceSnippet
 
 logger = get_logger(__name__)
 
@@ -38,6 +47,7 @@ class ChatService:
         self.incidents = IncidentRepository(session)
         self.feedback = FeedbackRepository(session)
         self.retrieval_logs = RetrievalLogRepository(session)
+        self.memories = ConversationMemoryRepository(session)
         self.retriever = HybridRetriever(session)
 
     def classify_intent(self, message: str, state: dict | None = None) -> str:
@@ -54,7 +64,17 @@ class ChatService:
     def calculate_confidence(self, retrieved: list) -> float:
         return retrieved[0].final_score if retrieved else 0.0
 
-    def generate_answer(self, question: str, retrieved_chunks: list, conversation_state: dict) -> tuple[Any, list[dict[str, Any]]]:
+    def generate_answer(
+        self,
+        question: str,
+        retrieved_chunks: list,
+        conversation_state: dict,
+        *,
+        evidence_policy: dict[str, Any] | None = None,
+        planner_output: dict[str, Any] | None = None,
+        conversation_memory: list[dict[str, Any]] | None = None,
+        datasource_status: dict[str, Any] | None = None,
+    ) -> tuple[Any, list[dict[str, Any]]]:
         context_chunks = [
             {
                 "chunk_id": item.chunk_id,
@@ -65,10 +85,19 @@ class ChatService:
             }
             for item in retrieved_chunks
         ]
+        llm_state = dict(conversation_state)
+        if evidence_policy:
+            llm_state["_evidence_policy"] = evidence_policy
+        if planner_output:
+            llm_state["_planner_output"] = planner_output
+        if conversation_memory is not None:
+            llm_state["_conversation_memory"] = conversation_memory
+        if datasource_status:
+            llm_state["_datasource_status"] = datasource_status
         decision = self.llm_provider.generate_chat_response(
             question=question,
             context_chunks=context_chunks,
-            conversation_state=conversation_state,
+            conversation_state=llm_state,
         )
         return decision, context_chunks
 
@@ -214,12 +243,20 @@ class ChatService:
                 started_at,
                 trace_run=trace_run,
             )
+            meta = response.get("_meta", {})
             with start_span("chat.persist", {"conversation_id": conversation.id, "intent": intent}):
                 self.conversations.save_state(conversation, response.pop("_state"))
                 assistant_message = self.messages.create(conversation.id, "assistant", response["answer"], intent=intent)
                 self.session.commit()
             response["message_id"] = assistant_message.id
             chat_response = ChatResponse(**response)
+            self._index_turn_memory(
+                conversation_id=conversation.id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                chat_response=chat_response,
+                meta=meta,
+            )
             trace_run.set_outputs(self._trace_response_payload(chat_response))
             set_span_attributes(
                 request_span,
@@ -372,54 +409,134 @@ class ChatService:
     ) -> dict[str, Any]:
         clarification_attempts = int(state.get("clarification_attempts", 0))
         effective_config = retrieval_config or DEFAULT_RETRIEVAL_CONFIG
-        with trace_run.child(
-            "rag.retrieve",
-            run_type="retriever",
-            inputs={
-                "question": request.message,
-                "retrieval_config": {
-                    "top_k": effective_config.top_k,
-                    "vector_weight": effective_config.vector_weight,
-                    "text_weight": effective_config.text_weight,
-                    "vector_candidates": effective_config.vector_candidates,
-                    "text_candidates": effective_config.text_candidates,
-                },
-            },
-        ) if trace_run else RagTrace().start_run("rag.retrieve") as retrieve_run, start_span(
-            "chat.retrieve",
-            {
-                "conversation_id": conversation_id,
-                "query.length": len(request.message),
-                "retrieval.top_k": effective_config.top_k,
-                "retrieval.vector_weight": effective_config.vector_weight,
-                "retrieval.text_weight": effective_config.text_weight,
-            },
-        ) as retrieve_span:
-            retrieved = self.retrieve(request.message, retrieval_config=effective_config)
-            confidence = self.calculate_confidence(retrieved)
-            retrieve_attrs = retrieval_span_attributes(retrieved=retrieved, confidence=confidence)
-            set_span_attributes(retrieve_span, retrieve_attrs)
-            retrieve_run.set_outputs(
-                {
-                    "confidence": confidence,
-                    "retrieved_chunks": serialize_chunks_for_langsmith(retrieved),
-                    "retrieved_count": len(retrieved),
-                }
-            )
+        recent_messages = self._recent_messages_for_planner(conversation_id, exclude_message_id=user_message_id)
+        plan = self._plan_chat_turn(
+            message=request.message,
+            state=state,
+            recent_messages=recent_messages,
+            trace_run=trace_run,
+        )
+        planner_payload = plan.model_dump()
 
-        if not retrieved or confidence < self.settings.retrieval_confidence_threshold:
+        if plan.should_ask_clarification_first:
+            clarification_attempts += 1
+            state["clarification_attempts"] = clarification_attempts
+            answer = self._build_planner_clarification_answer(plan, clarification_attempts)
+            self._trace_formatted_response(
+                trace_run,
+                answer=answer,
+                sources=[],
+                related_incidents=[],
+                conversation_id=conversation_id,
+                actual_behavior="ask_clarification",
+                decision={"planner_output": planner_payload, "policy_decision": "ask_clarification_before_retrieval"},
+            )
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            if write_retrieval_logs:
+                self._write_retrieval_log(
+                    conversation_id=conversation_id,
+                    message_id=user_message_id,
+                    query=request.message,
+                    intent=intent,
+                    answer=answer,
+                    confidence=0.0,
+                    latency_ms=latency_ms,
+                )
+            return {
+                "conversation_id": conversation_id,
+                "answer": answer,
+                "sources": [],
+                "related_incidents": [],
+                "needs_clarification": True,
+                "clarification_attempt": clarification_attempts,
+                "should_offer_incident": False,
+                "adaptive_card": None,
+                "fallback_text": answer,
+                "_meta": {
+                    "retrieved": [],
+                    "conversation_memory": [],
+                    "confidence": 0.0,
+                    "decision": None,
+                    "context_chunks": [],
+                    "planner_output": planner_payload,
+                    "actual_behavior": "ask_clarification",
+                    "latency_ms": latency_ms,
+                },
+                "_state": state,
+            }
+
+        memory_query = (plan.conversation_memory_query or request.message).strip()
+        memory_results = self._retrieve_conversation_memory(
+            conversation_id=conversation_id,
+            query=memory_query,
+            exclude_message_id=user_message_id,
+            enabled=plan.needs_conversation_memory,
+            trace_run=trace_run,
+        )
+        memory_payload = [memory.to_dict() for memory in memory_results]
+
+        retrieved = []
+        confidence = 0.0
+        knowledge_query = (plan.knowledge_index_query or request.message).strip()
+        if plan.needs_knowledge_index:
+            with trace_run.child(
+                "rag.retrieve",
+                run_type="retriever",
+                inputs={
+                    "question": request.message,
+                    "knowledge_index_query": knowledge_query,
+                    "retrieval_config": {
+                        "top_k": effective_config.top_k,
+                        "vector_weight": effective_config.vector_weight,
+                        "text_weight": effective_config.text_weight,
+                        "vector_candidates": effective_config.vector_candidates,
+                        "text_candidates": effective_config.text_candidates,
+                    },
+                },
+            ) if trace_run else RagTrace().start_run("rag.retrieve") as retrieve_run, start_span(
+                "chat.retrieve",
+                {
+                    "conversation_id": conversation_id,
+                    "query.length": len(knowledge_query),
+                    "retrieval.top_k": effective_config.top_k,
+                    "retrieval.vector_weight": effective_config.vector_weight,
+                    "retrieval.text_weight": effective_config.text_weight,
+                },
+            ) as retrieve_span:
+                retrieved = self.retrieve(knowledge_query, retrieval_config=effective_config)
+                confidence = self.calculate_confidence(retrieved)
+                retrieve_attrs = retrieval_span_attributes(retrieved=retrieved, confidence=confidence)
+                set_span_attributes(retrieve_span, retrieve_attrs)
+                retrieve_run.set_outputs(
+                    {
+                        "confidence": confidence,
+                        "retrieved_chunks": serialize_chunks_for_langsmith(retrieved),
+                        "retrieved_count": len(retrieved),
+                    }
+                )
+
+        evidence_query = request.message
+        query_signals, evidence_assessment = assess_evidence(evidence_query, retrieved)
+        datasource_status = {
+            "conversation_memory": {
+                "requested": plan.needs_conversation_memory,
+                "query": memory_query if plan.needs_conversation_memory else "",
+                "result_count": len(memory_results),
+            },
+            "knowledge_index": {
+                "requested": plan.needs_knowledge_index,
+                "query": knowledge_query if plan.needs_knowledge_index else "",
+                "result_count": len(retrieved),
+                "confidence": confidence,
+            },
+        }
+
+        if (not memory_results) and (not retrieved or confidence < self.settings.retrieval_confidence_threshold):
             clarification_attempts += 1
             state["clarification_attempts"] = clarification_attempts
             if clarification_attempts >= 3:
                 state["offer_incident"] = True
-                answer = (
-                    "Resumen\n"
-                    "No tengo evidencia suficiente en el indice para responder con seguridad.\n\n"
-                    "Detalle\n"
-                    "Con la informacion recuperada no puedo darte un procedimiento fiable sin inventar pasos.\n\n"
-                    "Siguiente paso\n"
-                    "Si quieres, puedo ayudarte a registrar una incidencia no resuelta para dejar trazabilidad."
-                )
+                answer = self._build_incident_offer_answer()
                 self._trace_formatted_response(
                     trace_run,
                     answer=answer,
@@ -451,9 +568,12 @@ class ChatService:
                     "fallback_text": answer,
                     "_meta": {
                         "retrieved": retrieved,
+                        "conversation_memory": memory_payload,
                         "confidence": confidence,
                         "decision": None,
                         "context_chunks": [],
+                        "planner_output": planner_payload,
+                        "datasource_status": datasource_status,
                         "actual_behavior": "abstain_and_offer_incident_registration",
                         "latency_ms": latency_ms,
                     },
@@ -499,9 +619,123 @@ class ChatService:
                 "fallback_text": full_answer,
                 "_meta": {
                     "retrieved": retrieved,
+                    "conversation_memory": memory_payload,
                     "confidence": confidence,
                     "decision": None,
                     "context_chunks": [],
+                    "planner_output": planner_payload,
+                    "datasource_status": datasource_status,
+                    "actual_behavior": "ask_clarification",
+                    "latency_ms": latency_ms,
+                },
+                "_state": state,
+            }
+
+        if plan.needs_knowledge_index and not memory_results and self._should_pre_gate_answer(evidence_assessment):
+            clarification_attempts += 1
+            state["clarification_attempts"] = clarification_attempts
+            policy_payload = {
+                "planner_output": planner_payload,
+                "query_signals": query_signals.to_dict(),
+                "evidence_assessment": evidence_assessment.to_dict(),
+                "datasource_status": datasource_status,
+                "policy_decision": "ask_clarification",
+                "policy_override": True,
+            }
+            if clarification_attempts >= 3:
+                state["offer_incident"] = True
+                answer = self._build_incident_offer_answer()
+                self._trace_formatted_response(
+                    trace_run,
+                    answer=answer,
+                    sources=[],
+                    related_incidents=[],
+                    conversation_id=conversation_id,
+                    actual_behavior="abstain_and_offer_incident_registration",
+                    decision=policy_payload,
+                )
+                latency_ms = int((time.perf_counter() - started_at) * 1000)
+                if write_retrieval_logs:
+                    self._write_chunked_retrieval_log(
+                        conversation_id=conversation_id,
+                        message_id=user_message_id,
+                        query=request.message,
+                        intent=intent,
+                        answer=answer,
+                        retrieved=retrieved,
+                        confidence=confidence,
+                        latency_ms=latency_ms,
+                        was_answered=False,
+                    )
+                return {
+                    "conversation_id": conversation_id,
+                    "answer": answer,
+                    "sources": [],
+                    "related_incidents": [],
+                    "needs_clarification": False,
+                    "clarification_attempt": clarification_attempts,
+                    "should_offer_incident": True,
+                    "adaptive_card": None,
+                    "fallback_text": answer,
+                    "_meta": {
+                        "retrieved": retrieved,
+                        "conversation_memory": memory_payload,
+                        "confidence": confidence,
+                        "decision": None,
+                        "context_chunks": [],
+                        "planner_output": planner_payload,
+                        "datasource_status": datasource_status,
+                        "query_signals": query_signals.to_dict(),
+                        "evidence_assessment": evidence_assessment.to_dict(),
+                        "actual_behavior": "abstain_and_offer_incident_registration",
+                        "latency_ms": latency_ms,
+                    },
+                    "_state": state,
+                }
+
+            answer = build_policy_clarification_answer(evidence_assessment, clarification_attempts)
+            self._trace_formatted_response(
+                trace_run,
+                answer=answer,
+                sources=[],
+                related_incidents=[],
+                conversation_id=conversation_id,
+                actual_behavior="ask_clarification",
+                decision=policy_payload,
+            )
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            if write_retrieval_logs:
+                self._write_chunked_retrieval_log(
+                    conversation_id=conversation_id,
+                    message_id=user_message_id,
+                    query=request.message,
+                    intent=intent,
+                    answer=answer,
+                    retrieved=retrieved,
+                    confidence=confidence,
+                    latency_ms=latency_ms,
+                    was_answered=False,
+                )
+            return {
+                "conversation_id": conversation_id,
+                "answer": answer,
+                "sources": [],
+                "related_incidents": [],
+                "needs_clarification": True,
+                "clarification_attempt": clarification_attempts,
+                "should_offer_incident": False,
+                "adaptive_card": None,
+                "fallback_text": answer,
+                "_meta": {
+                    "retrieved": retrieved,
+                    "conversation_memory": memory_payload,
+                    "confidence": confidence,
+                    "decision": None,
+                    "context_chunks": [],
+                    "planner_output": planner_payload,
+                    "datasource_status": datasource_status,
+                    "query_signals": query_signals.to_dict(),
+                    "evidence_assessment": evidence_assessment.to_dict(),
                     "actual_behavior": "ask_clarification",
                     "latency_ms": latency_ms,
                 },
@@ -532,13 +766,25 @@ class ChatService:
         prompt_messages = build_chat_messages(
             question=request.message,
             context_chunks=trace_context_chunks,
-            conversation_state=state,
+            conversation_state={
+                **state,
+                "_planner_output": planner_payload,
+                "_conversation_memory": memory_payload if plan.needs_conversation_memory else None,
+                "_datasource_status": datasource_status,
+                "_evidence_policy": {
+                    "query_signals": query_signals.to_dict(),
+                    "evidence_assessment": evidence_assessment.to_dict(),
+                },
+            },
         )
         with trace_run.child(
             "rag.generate_answer",
             run_type="llm",
             inputs={
                 "question": request.message,
+                "planner_output": planner_payload,
+                "conversation_memory": memory_payload if plan.needs_conversation_memory else [],
+                "datasource_status": datasource_status,
                 "context_chunks": serialize_context_for_langsmith(trace_context_chunks),
                 "messages": prompt_messages,
             },
@@ -547,10 +793,25 @@ class ChatService:
             {
                 "conversation_id": conversation_id,
                 "context_chunk_count": len(trace_context_chunks),
+                "conversation_memory_count": len(memory_payload),
                 "question.length": len(request.message),
+                "planner.needs_conversation_memory": plan.needs_conversation_memory,
+                "planner.needs_knowledge_index": plan.needs_knowledge_index,
             },
         ) as answer_span:
-            decision, context_chunks = self.generate_answer(request.message, retrieved, state)
+            evidence_policy = {
+                "query_signals": query_signals.to_dict(),
+                "evidence_assessment": evidence_assessment.to_dict(),
+            }
+            decision, context_chunks = self.generate_answer(
+                request.message,
+                retrieved,
+                state,
+                evidence_policy=evidence_policy,
+                planner_output=planner_payload,
+                conversation_memory=memory_payload if plan.needs_conversation_memory else None,
+                datasource_status=datasource_status,
+            )
             answer_run.set_outputs(
                 {
                     "decision": serialize_decision_for_langsmith(decision),
@@ -566,6 +827,178 @@ class ChatService:
                     "llm.answer_length": len(decision.answer or ""),
                 },
             )
+        if plan.needs_knowledge_index and not memory_results and self._should_policy_override_decision(evidence_assessment, decision):
+            clarification_attempts += 1
+            state["clarification_attempts"] = clarification_attempts
+            policy_payload = {
+                "planner_output": planner_payload,
+                "query_signals": query_signals.to_dict(),
+                "evidence_assessment": evidence_assessment.to_dict(),
+                "datasource_status": datasource_status,
+                "policy_decision": "ask_clarification",
+                "policy_override": True,
+                "llm_decision": serialize_decision_for_langsmith(decision),
+            }
+            answer = build_policy_clarification_answer(evidence_assessment, clarification_attempts)
+            self._trace_formatted_response(
+                trace_run,
+                answer=answer,
+                sources=[],
+                related_incidents=[],
+                conversation_id=conversation_id,
+                actual_behavior="ask_clarification",
+                decision=policy_payload,
+            )
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            if write_retrieval_logs:
+                self._write_chunked_retrieval_log(
+                    conversation_id=conversation_id,
+                    message_id=user_message_id,
+                    query=request.message,
+                    intent=intent,
+                    answer=answer,
+                    retrieved=retrieved,
+                    confidence=confidence,
+                    latency_ms=latency_ms,
+                    was_answered=False,
+                )
+            return {
+                "conversation_id": conversation_id,
+                "answer": answer,
+                "sources": [],
+                "related_incidents": [],
+                "needs_clarification": True,
+                "clarification_attempt": clarification_attempts,
+                "should_offer_incident": False,
+                "adaptive_card": None,
+                "fallback_text": answer,
+                "_meta": {
+                    "retrieved": retrieved,
+                    "conversation_memory": memory_payload,
+                    "confidence": confidence,
+                    "decision": decision,
+                    "context_chunks": context_chunks,
+                    "planner_output": planner_payload,
+                    "datasource_status": datasource_status,
+                    "query_signals": query_signals.to_dict(),
+                    "evidence_assessment": evidence_assessment.to_dict(),
+                    "actual_behavior": "ask_clarification",
+                    "latency_ms": latency_ms,
+                    "policy_override": True,
+                },
+                "_state": state,
+            }
+        if decision.needs_clarification:
+            clarification_attempts += 1
+            state["clarification_attempts"] = clarification_attempts
+            decision_payload = serialize_decision_for_langsmith(decision)
+            if clarification_attempts >= 3:
+                state["offer_incident"] = True
+                answer = self._build_incident_offer_answer()
+                self._trace_formatted_response(
+                    trace_run,
+                    answer=answer,
+                    sources=[],
+                    related_incidents=[],
+                    conversation_id=conversation_id,
+                    actual_behavior="abstain_and_offer_incident_registration",
+                    decision=decision_payload,
+                )
+                latency_ms = int((time.perf_counter() - started_at) * 1000)
+                if write_retrieval_logs:
+                    self.retrieval_logs.create(
+                        conversation_id=conversation_id,
+                        message_id=user_message_id,
+                        query=request.message,
+                        detected_intent=intent,
+                        retrieved_chunk_ids=[item.chunk_id for item in retrieved],
+                        retrieved_source_ids=[item.source_id for item in retrieved],
+                        scores={item.chunk_id: item.final_score for item in retrieved},
+                        confidence_score=confidence,
+                        was_answered=False,
+                        tokens_input_estimated=len(request.message.split()) + sum(len(item.content.split()) for item in retrieved),
+                        tokens_output_estimated=len(answer.split()),
+                        latency_ms=latency_ms,
+                        answer=answer,
+                    )
+                return {
+                    "conversation_id": conversation_id,
+                    "answer": answer,
+                    "sources": [],
+                    "related_incidents": [],
+                    "needs_clarification": False,
+                    "clarification_attempt": clarification_attempts,
+                    "should_offer_incident": True,
+                    "adaptive_card": None,
+                    "fallback_text": answer,
+                    "_meta": {
+                        "retrieved": retrieved,
+                        "conversation_memory": memory_payload,
+                        "confidence": confidence,
+                        "decision": decision,
+                        "context_chunks": context_chunks,
+                        "planner_output": planner_payload,
+                        "datasource_status": datasource_status,
+                        "query_signals": query_signals.to_dict(),
+                        "evidence_assessment": evidence_assessment.to_dict(),
+                        "actual_behavior": "abstain_and_offer_incident_registration",
+                        "latency_ms": latency_ms,
+                    },
+                    "_state": state,
+                }
+
+            answer = self._build_llm_clarification_answer(decision, clarification_attempts)
+            self._trace_formatted_response(
+                trace_run,
+                answer=answer,
+                sources=[],
+                related_incidents=[],
+                conversation_id=conversation_id,
+                actual_behavior="ask_clarification",
+                decision=decision_payload,
+            )
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            if write_retrieval_logs:
+                self.retrieval_logs.create(
+                    conversation_id=conversation_id,
+                    message_id=user_message_id,
+                    query=request.message,
+                    detected_intent=intent,
+                    retrieved_chunk_ids=[item.chunk_id for item in retrieved],
+                    retrieved_source_ids=[item.source_id for item in retrieved],
+                    scores={item.chunk_id: item.final_score for item in retrieved},
+                    confidence_score=confidence,
+                    was_answered=False,
+                    tokens_input_estimated=len(request.message.split()) + sum(len(item.content.split()) for item in retrieved),
+                    tokens_output_estimated=len(answer.split()),
+                    latency_ms=latency_ms,
+                    answer=answer,
+                )
+            return {
+                "conversation_id": conversation_id,
+                "answer": answer,
+                "sources": [],
+                "related_incidents": [],
+                "needs_clarification": True,
+                "clarification_attempt": clarification_attempts,
+                "should_offer_incident": False,
+                "adaptive_card": None,
+                "fallback_text": answer,
+                "_meta": {
+                    "retrieved": retrieved,
+                    "conversation_memory": memory_payload,
+                    "confidence": confidence,
+                    "decision": decision,
+                    "context_chunks": context_chunks,
+                    "planner_output": planner_payload,
+                    "datasource_status": datasource_status,
+                    "query_signals": query_signals.to_dict(),
+                    "evidence_assessment": evidence_assessment.to_dict(),
+                    "actual_behavior": "ask_clarification",
+                    "latency_ms": latency_ms,
+                },
+                "_state": state,
+            }
         state["clarification_attempts"] = 0
         state["offer_incident"] = False
         related_incidents = [
@@ -618,9 +1051,14 @@ class ChatService:
             "fallback_text": self._build_sources_fallback(answer, sources, related_incidents),
             "_meta": {
                 "retrieved": retrieved,
+                "conversation_memory": memory_payload,
                 "confidence": confidence,
                 "decision": decision,
                 "context_chunks": context_chunks,
+                "planner_output": planner_payload,
+                "datasource_status": datasource_status,
+                "query_signals": query_signals.to_dict(),
+                "evidence_assessment": evidence_assessment.to_dict(),
                 "actual_behavior": "ask_clarification" if decision.needs_clarification else "answer_with_sources",
                 "latency_ms": latency_ms,
             },
@@ -636,6 +1074,250 @@ class ChatService:
         )
         lines = ["Resumen", cleaned_answer, "", "Siguiente paso", next_step]
         return "\n".join(lines)
+
+    def _build_llm_clarification_answer(self, decision: Any, clarification_attempts: int) -> str:
+        question = (getattr(decision, "clarification_question", None) or "").strip()
+        if not question:
+            question = "Necesito un dato mas para responder con seguridad. Indica sistema, proceso, error exacto o contexto operativo."
+        return "\n".join(
+            [
+                "Resumen",
+                "Necesito aclarar la consulta antes de darte una respuesta fiable.",
+                "",
+                "Detalle",
+                question,
+                "",
+                "Siguiente paso",
+                f"Responde con ese dato para continuar. Intento de aclaracion {clarification_attempts} de 2.",
+            ]
+        )
+
+    def _build_incident_offer_answer(self) -> str:
+        return (
+            "Resumen\n"
+            "No tengo evidencia suficiente en el indice para responder con seguridad.\n\n"
+            "Detalle\n"
+            "Con la informacion recuperada no puedo darte un procedimiento fiable sin inventar pasos.\n\n"
+            "Siguiente paso\n"
+            "Si quieres, puedo ayudarte a registrar una incidencia no resuelta para dejar trazabilidad."
+        )
+
+    def _build_planner_clarification_answer(self, plan: ChatPlan, clarification_attempts: int) -> str:
+        systems = ", ".join(plan.mentioned_systems or [])
+        if systems:
+            detail = (
+                f"Para buscar bien en {systems}, necesito el error exacto, pantalla o paso donde ocurre, "
+                "proceso afectado y una referencia operativa si aplica."
+            )
+        else:
+            detail = (
+                "Necesito un dato mas antes de buscar: sistema, proceso, objetivo o error exacto. "
+                "Asi evito darte una respuesta basada en una suposicion."
+            )
+        return "\n".join(
+            [
+                "Resumen",
+                "Necesito aclarar la consulta antes de buscar informacion.",
+                "",
+                "Detalle",
+                detail,
+                "",
+                "Siguiente paso",
+                f"Indica sistema, proceso o contexto operativo. Intento de aclaracion {clarification_attempts} de 2.",
+            ]
+        )
+
+    def _recent_messages_for_planner(self, conversation_id: int, *, exclude_message_id: int, limit: int = 6) -> list[dict[str, Any]]:
+        messages = self.messages.list_by_conversation(conversation_id, limit=limit + 1)
+        payload: list[dict[str, Any]] = []
+        for message in messages:
+            if getattr(message, "id", None) == exclude_message_id:
+                continue
+            payload.append(
+                {
+                    "id": message.id,
+                    "role": message.role,
+                    "intent": message.intent,
+                    "content": message.content[:1200],
+                    "created_at": str(getattr(message, "created_at", "")),
+                }
+            )
+        return payload[-limit:]
+
+    def _plan_chat_turn(
+        self,
+        *,
+        message: str,
+        state: dict,
+        recent_messages: list[dict[str, Any]],
+        trace_run: Any | None,
+    ) -> ChatPlan:
+        with trace_run.child(
+            "rag.plan",
+            run_type="llm",
+            inputs={"message": message, "recent_messages": recent_messages, "state": state},
+        ) if trace_run else RagTrace().start_run("rag.plan") as plan_run, start_span(
+            "chat.plan",
+            {
+                "message.length": len(message),
+                "planner.recent_message_count": len(recent_messages),
+            },
+        ) as span:
+            fallback = False
+            try:
+                plan = self.llm_provider.plan_chat(
+                    message=message,
+                    recent_messages=recent_messages,
+                    conversation_state=state,
+                )
+            except Exception as exc:
+                fallback = True
+                logger.warning("No se pudo obtener plan conversacional; usando fallback seguro: %s", exc)
+                plan = ChatPlan.fallback(message)
+
+            if plan.needs_knowledge_index and not plan.knowledge_index_query.strip():
+                plan.knowledge_index_query = message
+            if plan.needs_conversation_memory and not plan.conversation_memory_query.strip():
+                plan.conversation_memory_query = message
+
+            payload = plan.model_dump()
+            plan_run.set_outputs({"planner_output": payload, "fallback_used": fallback})
+            set_span_attributes(
+                span,
+                {
+                    "planner.needs_conversation_memory": plan.needs_conversation_memory,
+                    "planner.needs_knowledge_index": plan.needs_knowledge_index,
+                    "planner.can_answer_from_conversation_only": plan.can_answer_from_conversation_only,
+                    "planner.should_ask_clarification_first": plan.should_ask_clarification_first,
+                    "planner.fallback_used": fallback,
+                },
+            )
+            return plan
+
+    def _retrieve_conversation_memory(
+        self,
+        *,
+        conversation_id: int,
+        query: str,
+        exclude_message_id: int,
+        enabled: bool,
+        trace_run: Any | None,
+    ) -> list[Any]:
+        if not enabled:
+            return []
+
+        with trace_run.child(
+            "rag.memory_retrieve",
+            run_type="retriever",
+            inputs={"conversation_id": conversation_id, "memory_query": query, "exclude_message_id": exclude_message_id},
+        ) if trace_run else RagTrace().start_run("rag.memory_retrieve") as memory_run, start_span(
+            "chat.memory_retrieve",
+            {
+                "conversation_id": conversation_id,
+                "query.length": len(query),
+                "exclude_message_id": exclude_message_id,
+            },
+        ) as span:
+            try:
+                query_embedding = self.llm_provider.embed_texts([query])[0]
+                memories = self.memories.search(
+                    conversation_id=conversation_id,
+                    query_embedding=query_embedding,
+                    limit=5,
+                    exclude_message_id=exclude_message_id,
+                )
+            except Exception as exc:
+                logger.warning("No se pudo recuperar memoria conversacional: %s", exc)
+                memories = []
+            payload = [memory.to_dict() for memory in memories]
+            memory_run.set_outputs({"conversation_memory": payload, "result_count": len(payload)})
+            set_span_attributes(
+                span,
+                {
+                    "memory.result_count": len(payload),
+                    "memory.message_ids": [item["message_id"] for item in payload],
+                },
+            )
+            return memories
+
+    def _index_turn_memory(
+        self,
+        *,
+        conversation_id: int,
+        user_message: Any,
+        assistant_message: Any,
+        chat_response: ChatResponse,
+        meta: dict[str, Any],
+    ) -> None:
+        planner_output = meta.get("planner_output") or {}
+        query_signals = meta.get("query_signals") or {}
+        source_keys = [f"{source.source_type}:{source.source_id}" for source in chat_response.sources]
+        entries = [
+            (
+                user_message,
+                {
+                    "kind": "user_message",
+                    "planner_output": planner_output,
+                    "mentioned_systems": planner_output.get("mentioned_systems") or query_signals.get("mentioned_systems") or [],
+                },
+            ),
+            (
+                assistant_message,
+                {
+                    "kind": "assistant_message",
+                    "source_keys": source_keys,
+                    "needs_clarification": chat_response.needs_clarification,
+                    "should_offer_incident": chat_response.should_offer_incident,
+                    "planner_output": planner_output,
+                },
+            ),
+        ]
+        payloads = []
+        for message, metadata in entries:
+            summary = summarize_message(message.content)
+            memory_text = build_message_memory_text(
+                role=message.role,
+                content=message.content,
+                summary=summary,
+                metadata=metadata,
+            )
+            payloads.append((message, summary, memory_text, metadata))
+
+        try:
+            embeddings = self.llm_provider.embed_texts([item[2] for item in payloads])
+            for (message, summary, memory_text, metadata), embedding in zip(payloads, embeddings, strict=True):
+                self.memories.upsert_for_message(
+                    conversation_id=conversation_id,
+                    message_id=message.id,
+                    role=message.role,
+                    memory_text=memory_text,
+                    summary=summary,
+                    metadata=metadata,
+                    embedding=embedding,
+                )
+            self.session.commit()
+        except Exception as exc:
+            logger.warning("No se pudo indexar memoria conversacional: %s", exc)
+            try:
+                self.session.rollback()
+            except Exception:
+                logger.warning("No se pudo revertir la transaccion fallida de memoria conversacional")
+
+    def _should_pre_gate_answer(self, evidence_assessment: Any) -> bool:
+        return bool(getattr(evidence_assessment, "should_block_answer", False))
+
+    def _should_policy_override_decision(self, evidence_assessment: Any, decision: Any) -> bool:
+        if getattr(decision, "needs_clarification", False) or getattr(decision, "should_offer_incident", False):
+            return False
+        if not getattr(evidence_assessment, "requires_direct_evidence", False):
+            return False
+        if getattr(evidence_assessment, "should_block_answer", False):
+            return True
+        direct_chunk_ids = set(getattr(evidence_assessment, "direct_chunk_ids", []) or [])
+        if not direct_chunk_ids:
+            return True
+        used_chunk_ids = set(getattr(decision, "used_chunk_ids", []) or [])
+        return bool(used_chunk_ids and not used_chunk_ids.intersection(direct_chunk_ids))
 
     def _trace_response_payload(self, response: ChatResponse) -> dict[str, Any]:
         return {
@@ -736,6 +1418,35 @@ class ChatService:
             confidence_score=confidence,
             was_answered=False,
             tokens_input_estimated=len(query.split()),
+            tokens_output_estimated=len(answer.split()),
+            latency_ms=latency_ms,
+            answer=answer,
+        )
+
+    def _write_chunked_retrieval_log(
+        self,
+        *,
+        conversation_id: int,
+        message_id: int,
+        query: str,
+        intent: str,
+        answer: str,
+        retrieved: list,
+        confidence: float,
+        latency_ms: int,
+        was_answered: bool,
+    ) -> None:
+        self.retrieval_logs.create(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            query=query,
+            detected_intent=intent,
+            retrieved_chunk_ids=[item.chunk_id for item in retrieved],
+            retrieved_source_ids=[item.source_id for item in retrieved],
+            scores={item.chunk_id: item.final_score for item in retrieved},
+            confidence_score=confidence,
+            was_answered=was_answered,
+            tokens_input_estimated=len(query.split()) + sum(len(item.content.split()) for item in retrieved),
             tokens_output_estimated=len(answer.split()),
             latency_ms=latency_ms,
             answer=answer,

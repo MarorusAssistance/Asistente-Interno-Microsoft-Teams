@@ -4,7 +4,7 @@ from hashlib import sha256
 
 from internal_assistant.config import get_settings
 from internal_assistant.llm.base import LLMProvider
-from internal_assistant.schemas.chat import AssistantDecision
+from internal_assistant.schemas.chat import AssistantDecision, ChatPlan
 
 
 class MockLLMProvider(LLMProvider):
@@ -28,6 +28,20 @@ class MockLLMProvider(LLMProvider):
         return vectors
 
     def generate_chat_response(self, *, question: str, context_chunks: list[dict], conversation_state: dict) -> AssistantDecision:
+        conversation_memory = conversation_state.get("_conversation_memory") or []
+        if conversation_memory and not context_chunks:
+            top_memories = conversation_memory[:2]
+            answer = "Resumen basado en memoria conversacional:\n" + "\n".join(
+                f"- {memory.get('memory_text', '')[:220]}" for memory in top_memories
+            )
+            return AssistantDecision(
+                answer=answer,
+                needs_clarification=False,
+                clarification_question=None,
+                should_offer_incident=False,
+                used_chunk_ids=[],
+            )
+
         if not context_chunks:
             return AssistantDecision(
                 answer=self.clarification_phrase,
@@ -48,3 +62,61 @@ class MockLLMProvider(LLMProvider):
             should_offer_incident=False,
             used_chunk_ids=[chunk["chunk_id"] for chunk in top_chunks],
         )
+
+    def plan_chat(self, *, message: str, recent_messages: list[dict], conversation_state: dict) -> ChatPlan:
+        normalized = message.strip().lower()
+        recent_text = " ".join(str(item.get("content", "")) for item in recent_messages).lower()
+        follow_up = any(
+            phrase in normalized
+            for phrase in (
+                "esa respuesta",
+                "no me vale",
+                "explicamelo mejor",
+                "explícamelo mejor",
+                "teniendo en cuenta",
+                "lo anterior",
+                "como te dije",
+            )
+        )
+        recall_only = any(
+            phrase in normalized
+            for phrase in (
+                "que te dije",
+                "qué te dije",
+                "que dije antes",
+                "resumeme lo anterior",
+                "resúmeme lo anterior",
+            )
+        )
+        if recall_only:
+            return ChatPlan(
+                intent="question_answering",
+                needs_conversation_memory=True,
+                needs_knowledge_index=False,
+                can_answer_from_conversation_only=True,
+                should_ask_clarification_first=False,
+                conversation_memory_query=message,
+                knowledge_index_query="",
+                user_context_summary="El usuario pide recuperar informacion de la conversacion.",
+                expected_source_preference=[],
+                mentioned_systems=[],
+                reason="mock_recall_only",
+            )
+        if follow_up:
+            query = message
+            if "onboarding" in recent_text or "operaciones" in recent_text:
+                query = "procedimiento de onboarding e iniciacion para nuevo empleado del equipo de operaciones"
+            return ChatPlan(
+                intent="question_answering",
+                needs_conversation_memory=True,
+                needs_knowledge_index=True,
+                can_answer_from_conversation_only=False,
+                should_ask_clarification_first=False,
+                conversation_memory_query=query,
+                knowledge_index_query=query,
+                user_context_summary="El usuario reformula una respuesta anterior.",
+                expected_source_preference=["document"],
+                mentioned_systems=[],
+                reason="mock_follow_up",
+            )
+        return ChatPlan.fallback(message)

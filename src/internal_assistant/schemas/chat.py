@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SourceSnippet(BaseModel):
@@ -18,6 +20,82 @@ class AssistantDecision(BaseModel):
     clarification_question: str | None = None
     should_offer_incident: bool = False
     used_chunk_ids: list[int] = Field(default_factory=list)
+
+    @field_validator("used_chunk_ids", mode="before")
+    @classmethod
+    def normalize_used_chunk_ids(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return value
+        normalized = []
+        for item in value:
+            if isinstance(item, int):
+                normalized.append(item)
+                continue
+            match = re.search(r"\d+", str(item))
+            if match:
+                normalized.append(int(match.group(0)))
+                continue
+            normalized.append(item)
+        return normalized
+
+
+class ChatPlan(BaseModel):
+    intent: str = "question_answering"
+    needs_conversation_memory: bool = False
+    needs_knowledge_index: bool = True
+    can_answer_from_conversation_only: bool = False
+    should_ask_clarification_first: bool = False
+    conversation_memory_query: str = ""
+    knowledge_index_query: str = ""
+    user_context_summary: str = ""
+    expected_source_preference: list[str] = Field(default_factory=list)
+    mentioned_systems: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+    @field_validator(
+        "conversation_memory_query",
+        "knowledge_index_query",
+        "user_context_summary",
+        "reason",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_text(cls, value):
+        return "" if value is None else value
+
+    @field_validator("expected_source_preference", "mentioned_systems", mode="before")
+    @classmethod
+    def normalize_string_lists(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        return value
+
+    @classmethod
+    def fallback(cls, message: str) -> "ChatPlan":
+        return cls(
+            intent="question_answering",
+            needs_conversation_memory=False,
+            needs_knowledge_index=True,
+            can_answer_from_conversation_only=False,
+            should_ask_clarification_first=False,
+            conversation_memory_query="",
+            knowledge_index_query=message,
+            user_context_summary="",
+            expected_source_preference=[],
+            mentioned_systems=[],
+            reason="fallback_safe_knowledge_search",
+        )
+
+    @model_validator(mode="after")
+    def normalize_plan(self) -> "ChatPlan":
+        if self.can_answer_from_conversation_only:
+            self.needs_conversation_memory = True
+            self.needs_knowledge_index = False
+        return self
 
 
 class ChatRequest(BaseModel):

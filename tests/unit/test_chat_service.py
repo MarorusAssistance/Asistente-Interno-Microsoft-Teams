@@ -3,12 +3,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from internal_assistant.chat.service import ChatService
+from internal_assistant.llm.base import LLMProvider
 from internal_assistant.llm.mock_provider import MockLLMProvider
+from internal_assistant.repositories.memory import RetrievedMemory
 from internal_assistant.rag import DEFAULT_RETRIEVAL_CONFIG
 from internal_assistant.rag.retrieval import RetrievedChunk
+from internal_assistant.schemas.chat import AssistantDecision
+from internal_assistant.schemas.chat import ChatPlan
 from internal_assistant.schemas.chat import ChatRequest
 from tests.conftest import (
     DummySession,
+    FakeConversationMemoryRepository,
     FakeConversationRepository,
     FakeFeedbackRepository,
     FakeIncidentRepository,
@@ -18,15 +23,88 @@ from tests.conftest import (
 )
 
 
-def build_service(results=None):
-    service = ChatService(DummySession(), llm_provider=MockLLMProvider())
+class StaticDecisionProvider(LLMProvider):
+    def __init__(self, decision: AssistantDecision, plan: ChatPlan | None = None):
+        self.decision = decision
+        self.plan = plan
+        self.calls = 0
+        self.plan_calls = 0
+        self.last_question = None
+        self.last_context_chunks = None
+        self.last_conversation_state = None
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1] * 512 for _ in texts]
+
+    def generate_chat_response(self, *, question: str, context_chunks: list[dict], conversation_state: dict) -> AssistantDecision:
+        self.calls += 1
+        self.last_question = question
+        self.last_context_chunks = context_chunks
+        self.last_conversation_state = conversation_state
+        return self.decision
+
+    def plan_chat(self, *, message: str, recent_messages: list[dict], conversation_state: dict) -> ChatPlan:
+        self.plan_calls += 1
+        return self.plan or super().plan_chat(
+            message=message,
+            recent_messages=recent_messages,
+            conversation_state=conversation_state,
+        )
+
+
+def retrieved_chunk(
+    *,
+    chunk_id: int,
+    source_type: str,
+    source_id: int,
+    content: str,
+    system: str,
+    title: str = "Fuente",
+    final_score: float = 0.9,
+):
+    return RetrievedChunk(
+        chunk_id=chunk_id,
+        source_type=source_type,
+        source_id=source_id,
+        content=content,
+        metadata={"title": title, "affected_system": system},
+        final_score=final_score,
+    )
+
+
+def retrieved_memory(memory_id=1, message_id=10, role="user", text="Usuario nuevo en operaciones pregunta por onboarding."):
+    return RetrievedMemory(
+        memory_id=memory_id,
+        conversation_id=1,
+        message_id=message_id,
+        role=role,
+        memory_text=text,
+        summary=text,
+        metadata={"kind": "user_message"},
+        score=0.95,
+    )
+
+
+def build_service(results=None, llm_provider=None):
+    service = ChatService(DummySession(), llm_provider=llm_provider or MockLLMProvider())
     service.conversations = FakeConversationRepository()
     service.messages = FakeMessageRepository()
     service.feedback = FakeFeedbackRepository()
     service.retrieval_logs = FakeRetrievalLogsRepository()
+    service.memories = FakeConversationMemoryRepository()
     service.incidents = FakeIncidentRepository()
     service.retriever = FakeRetriever(results or [])
     return service
+
+
+class CapturingRetriever:
+    def __init__(self, results=None):
+        self.results = results or []
+        self.queries = []
+
+    def search(self, query, query_embedding, limit=5, config=None):
+        self.queries.append(query)
+        return self.results[:limit]
 
 
 def test_low_confidence_flow_asks_for_clarification_then_offers_incident(monkeypatch):
@@ -61,6 +139,456 @@ def test_chat_response_with_sources_uses_retrieved_chunks(monkeypatch):
     assert response.sources
     assert response.answer.startswith("Resumen")
     assert "Fuentes consultadas" in response.fallback_text
+    assert service.retrieval_logs.items[-1]["was_answered"] is True
+
+
+def test_llm_clarification_decision_returns_question_not_solution(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    decision = AssistantDecision(
+        answer="Texto que parece una solucion pero no debe usarse",
+        needs_clarification=True,
+        clarification_question="Que error exacto ves en AlmaTrack WMS?",
+        should_offer_incident=False,
+        used_chunk_ids=[],
+    )
+    results = [
+        RetrievedChunk(
+            chunk_id=1,
+            source_type="incident",
+            source_id=8,
+            content="Caso similar de AlmaTrack WMS.",
+            metadata={"title": "Caso AlmaTrack", "affected_system": "AlmaTrack WMS"},
+            final_score=0.9,
+        )
+    ]
+    service = build_service(results, llm_provider=StaticDecisionProvider(decision))
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Tengo una duda sobre AlmaTrack WMS."))
+
+    assert response.needs_clarification is True
+    assert response.should_offer_incident is False
+    assert response.sources == []
+    assert "Que error exacto ves en AlmaTrack WMS?" in response.answer
+    assert "Texto que parece una solucion" not in response.answer
+    assert service.retrieval_logs.items[-1]["was_answered"] is False
+    assert service.retrieval_logs.items[-1]["retrieved_chunk_ids"] == [1]
+    assert service.conversations.conversations[response.conversation_id].state["clarification_attempts"] == 1
+
+
+def test_llm_clarification_after_max_attempts_offers_incident(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    decision = AssistantDecision(
+        answer="Texto que parece una solucion pero no debe usarse",
+        needs_clarification=True,
+        clarification_question="Que error exacto ves en AlmaTrack WMS?",
+        should_offer_incident=False,
+        used_chunk_ids=[],
+    )
+    results = [
+        RetrievedChunk(
+            chunk_id=1,
+            source_type="incident",
+            source_id=8,
+            content="Caso similar de AlmaTrack WMS.",
+            metadata={"title": "Caso AlmaTrack"},
+            final_score=0.9,
+        )
+    ]
+    service = build_service(results, llm_provider=StaticDecisionProvider(decision))
+    conversation = service.conversations.get_or_create(55, user_id="u1", channel_id="local")
+    conversation.state = {"clarification_attempts": 2}
+
+    response = service.handle_chat(ChatRequest(conversation_id=55, user_id="u1", message="Sigo sin tener mas detalle"))
+
+    assert response.needs_clarification is False
+    assert response.should_offer_incident is True
+    assert response.sources == []
+    assert "registrar una incidencia no resuelta" in response.answer
+    assert "Texto que parece una solucion" not in response.answer
+    assert service.retrieval_logs.items[-1]["was_answered"] is False
+
+
+def test_new_issue_with_only_similar_incidents_is_policy_clarification(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    decision = AssistantDecision(
+        answer="La solucion es forzar una resincronizacion.",
+        needs_clarification=False,
+        clarification_question=None,
+        should_offer_incident=False,
+        used_chunk_ids=[1],
+    )
+    provider = StaticDecisionProvider(decision)
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=1,
+                source_type="incident",
+                source_id=38,
+                content="Incidencia resuelta similar de AlmaTrack WMS.",
+                system="AlmaTrack WMS",
+                title="Sincronizacion incompleta",
+            )
+        ],
+        llm_provider=provider,
+    )
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="No encuentro solucion para un error nuevo en AlmaTrack WMS."))
+
+    assert response.needs_clarification is True
+    assert response.sources == []
+    assert "error exacto" in response.answer
+    assert "resincronizacion" not in response.answer
+    assert provider.calls == 0
+    assert service.retrieval_logs.items[-1]["was_answered"] is False
+    assert service.retrieval_logs.items[-1]["retrieved_chunk_ids"] == [1]
+
+
+def test_procedure_request_with_relevant_document_stays_normal(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    decision = AssistantDecision(
+        answer="Marca los bultos expedidos y los retenidos por separado.",
+        needs_clarification=False,
+        clarification_question=None,
+        should_offer_incident=False,
+        used_chunk_ids=[1],
+    )
+    provider = StaticDecisionProvider(decision)
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=1,
+                source_type="document",
+                source_id=1,
+                content="Procedimiento de entrega parcial en LogiCore ERP.",
+                system="LogiCore ERP",
+                title="Registro de entregas parciales",
+            )
+        ],
+        llm_provider=provider,
+    )
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Como registro una entrega parcial en LogiCore ERP?"))
+
+    assert response.needs_clarification is False
+    assert response.sources
+    assert "Marca los bultos" in response.answer
+    assert provider.calls == 1
+    assert service.retrieval_logs.items[-1]["was_answered"] is True
+
+
+def test_procedure_request_without_document_is_policy_clarification(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    provider = StaticDecisionProvider(
+        AssistantDecision(
+            answer="Usa el caso resuelto como procedimiento.",
+            needs_clarification=False,
+            clarification_question=None,
+            should_offer_incident=False,
+            used_chunk_ids=[1],
+        )
+    )
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=1,
+                source_type="incident",
+                source_id=22,
+                content="Incidencia parecida de LogiCore ERP.",
+                system="LogiCore ERP",
+            )
+        ],
+        llm_provider=provider,
+    )
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Que pasos debo seguir para una entrega parcial en LogiCore ERP?"))
+
+    assert response.needs_clarification is True
+    assert response.sources == []
+    assert "procedimiento documentado" in response.answer
+    assert provider.calls == 0
+
+
+def test_system_mismatch_is_policy_clarification(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    provider = StaticDecisionProvider(
+        AssistantDecision(
+            answer="Respuesta usando SafeGate.",
+            needs_clarification=False,
+            clarification_question=None,
+            should_offer_incident=False,
+            used_chunk_ids=[1],
+        )
+    )
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=1,
+                source_type="document",
+                source_id=9,
+                content="Procedimiento de SafeGate.",
+                system="SafeGate",
+            )
+        ],
+        llm_provider=provider,
+    )
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="No encuentro solucion para un error nuevo en AlmaTrack WMS."))
+
+    assert response.needs_clarification is True
+    assert response.sources == []
+    assert "no pertenecen al sistema" in response.answer
+    assert provider.calls == 0
+
+
+def test_post_gate_overrides_llm_answer_when_policy_is_restrictive(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    monkeypatch.setattr(ChatService, "_should_pre_gate_answer", lambda self, assessment: False)
+    provider = StaticDecisionProvider(
+        AssistantDecision(
+            answer="La solucion cerrada no debe pasar.",
+            needs_clarification=False,
+            clarification_question=None,
+            should_offer_incident=False,
+            used_chunk_ids=[1],
+        )
+    )
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=1,
+                source_type="incident",
+                source_id=38,
+                content="Incidencia resuelta similar de AlmaTrack WMS.",
+                system="AlmaTrack WMS",
+            )
+        ],
+        llm_provider=provider,
+    )
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="No encuentro solucion para un error nuevo en AlmaTrack WMS."))
+
+    assert response.needs_clarification is True
+    assert response.sources == []
+    assert "solucion cerrada" not in response.answer
+    assert provider.calls == 1
+    assert service.retrieval_logs.items[-1]["was_answered"] is False
+
+
+def test_planner_followup_uses_memory_and_abstract_index_query(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    plan = ChatPlan(
+        intent="question_answering",
+        needs_conversation_memory=True,
+        needs_knowledge_index=True,
+        can_answer_from_conversation_only=False,
+        should_ask_clarification_first=False,
+        conversation_memory_query="respuesta anterior sobre onboarding para nuevo empleado en operaciones",
+        knowledge_index_query="procedimiento de onboarding e iniciacion para nuevo empleado del equipo de operaciones",
+        user_context_summary="Usuario nuevo en operaciones.",
+        expected_source_preference=["document"],
+        mentioned_systems=[],
+        reason="follow_up",
+    )
+    provider = StaticDecisionProvider(
+        AssistantDecision(
+            answer="Completa manuales, alta en OnboardHub y permisos iniciales.",
+            needs_clarification=False,
+            should_offer_incident=False,
+            used_chunk_ids=[7],
+        ),
+        plan=plan,
+    )
+    result = retrieved_chunk(
+        chunk_id=7,
+        source_type="document",
+        source_id=4,
+        content="Checklist de onboarding para operaciones.",
+        system="OnboardHub",
+    )
+    service = build_service([result], llm_provider=provider)
+    service.retriever = CapturingRetriever([result])
+    service.memories = FakeConversationMemoryRepository([retrieved_memory()])
+    service.conversations.get_or_create(20, user_id="u1", channel_id="local")
+    service.messages.create(20, "user", "Soy nuevo en operaciones. Que pasos de onboarding debo completar?", intent="question_answering")
+
+    response = service.handle_chat(ChatRequest(conversation_id=20, user_id="u1", message="esa respuesta no me vale, indicame mejor los pasos"))
+
+    assert response.needs_clarification is False
+    assert service.retriever.queries == [plan.knowledge_index_query]
+    assert service.memories.search_calls
+    assert provider.last_conversation_state["_conversation_memory"]
+    assert provider.last_conversation_state["_planner_output"]["knowledge_index_query"] == plan.knowledge_index_query
+
+
+def test_planner_memory_only_skips_chunk_retrieval(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    plan = ChatPlan(
+        intent="question_answering",
+        needs_conversation_memory=True,
+        needs_knowledge_index=False,
+        can_answer_from_conversation_only=True,
+        should_ask_clarification_first=False,
+        conversation_memory_query="que dijo el usuario sobre operaciones",
+        knowledge_index_query="",
+        user_context_summary="El usuario pregunta por la conversacion.",
+        expected_source_preference=[],
+        mentioned_systems=[],
+        reason="conversation_only",
+    )
+    provider = StaticDecisionProvider(
+        AssistantDecision(answer="Dijiste que eras nuevo en operaciones.", needs_clarification=False, used_chunk_ids=[]),
+        plan=plan,
+    )
+    service = build_service([], llm_provider=provider)
+    service.retriever = CapturingRetriever([])
+    service.memories = FakeConversationMemoryRepository([retrieved_memory(text="Usuario dijo que era nuevo en operaciones.")])
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Que te dije antes sobre mi equipo?"))
+
+    assert response.needs_clarification is False
+    assert service.retriever.queries == []
+    assert service.memories.search_calls
+    assert provider.last_context_chunks == []
+    assert provider.last_conversation_state["_conversation_memory"]
+
+
+def test_planner_index_only_skips_memory_search(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    plan = ChatPlan.fallback("Como registro una entrega parcial en LogiCore ERP?")
+    provider = StaticDecisionProvider(
+        AssistantDecision(answer="Marca bultos expedidos y retenidos.", needs_clarification=False, used_chunk_ids=[1]),
+        plan=plan,
+    )
+    result = retrieved_chunk(
+        chunk_id=1,
+        source_type="document",
+        source_id=1,
+        content="Procedimiento de entrega parcial.",
+        system="LogiCore ERP",
+    )
+    service = build_service([result], llm_provider=provider)
+    service.retriever = CapturingRetriever([result])
+    service.memories = FakeConversationMemoryRepository([retrieved_memory()])
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Como registro una entrega parcial en LogiCore ERP?"))
+
+    assert response.needs_clarification is False
+    assert service.retriever.queries == [plan.knowledge_index_query]
+    assert service.memories.search_calls == []
+    assert "_conversation_memory" not in provider.last_conversation_state
+
+
+def test_requested_empty_index_is_signaled_when_memory_exists(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    plan = ChatPlan(
+        intent="question_answering",
+        needs_conversation_memory=True,
+        needs_knowledge_index=True,
+        can_answer_from_conversation_only=False,
+        should_ask_clarification_first=False,
+        conversation_memory_query="contexto anterior",
+        knowledge_index_query="procedimiento inexistente",
+        user_context_summary="",
+        expected_source_preference=["document"],
+        mentioned_systems=[],
+        reason="needs_both",
+    )
+    provider = StaticDecisionProvider(
+        AssistantDecision(answer="Con la memoria recuperada puedo responder parcialmente.", needs_clarification=False, used_chunk_ids=[]),
+        plan=plan,
+    )
+    service = build_service([], llm_provider=provider)
+    service.retriever = CapturingRetriever([])
+    service.memories = FakeConversationMemoryRepository([retrieved_memory()])
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="mejor teniendo en cuenta lo anterior"))
+
+    assert response.needs_clarification is False
+    assert provider.last_conversation_state["_datasource_status"]["knowledge_index"]["requested"] is True
+    assert provider.last_conversation_state["_datasource_status"]["knowledge_index"]["result_count"] == 0
+
+
+def test_planner_hallucinated_system_does_not_force_mismatch_when_user_did_not_mention_it(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    plan = ChatPlan(
+        intent="question_answering",
+        needs_conversation_memory=False,
+        needs_knowledge_index=True,
+        can_answer_from_conversation_only=False,
+        should_ask_clarification_first=False,
+        conversation_memory_query="",
+        knowledge_index_query="procedimiento de onboarding para operadores en LogiCore ERP",
+        user_context_summary="Usuario nuevo en operaciones.",
+        expected_source_preference=["document"],
+        mentioned_systems=["LogiCore ERP"],
+        reason="planner_over_specific",
+    )
+    provider = StaticDecisionProvider(
+        AssistantDecision(answer="Completa el checklist de bienvenida.", needs_clarification=False, used_chunk_ids=[10]),
+        plan=plan,
+    )
+    result = retrieved_chunk(
+        chunk_id=10,
+        source_type="document",
+        source_id=4,
+        content="Checklist de onboarding en OnboardHub.",
+        system="OnboardHub",
+    )
+    service = build_service([result], llm_provider=provider)
+    service.retriever = CapturingRetriever([result])
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Soy nuevo en operaciones. Que pasos de onboarding debo completar?"))
+
+    assert response.needs_clarification is False
+    assert response.sources
+    assert "Completa el checklist" in response.answer
+
+
+def test_planner_clarification_does_not_expose_internal_reason(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    service = build_service([])
+    plan = ChatPlan(
+        intent="question_answering",
+        needs_conversation_memory=False,
+        needs_knowledge_index=False,
+        can_answer_from_conversation_only=False,
+        should_ask_clarification_first=True,
+        conversation_memory_query="",
+        knowledge_index_query="",
+        user_context_summary="",
+        expected_source_preference=[],
+        mentioned_systems=["AlmaTrack WMS"],
+        reason="El sistema no esta configurado para el usuario por la conversacion anterior.",
+    )
+
+    answer = service._build_planner_clarification_answer(plan, 1)
+
+    assert "no esta configurado" not in answer
+    assert "AlmaTrack WMS" in answer
+    assert "error exacto" in answer
+
+
+def test_memory_indexing_failure_does_not_break_chat(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    result = retrieved_chunk(
+        chunk_id=1,
+        source_type="document",
+        source_id=1,
+        content="Procedimiento de entrega parcial.",
+        system="LogiCore ERP",
+    )
+    service = build_service([result])
+
+    class FailingMemoryRepository(FakeConversationMemoryRepository):
+        def upsert_for_message(self, **kwargs):
+            raise RuntimeError("memory db down")
+
+    service.memories = FailingMemoryRepository()
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Como se controla un pedido intercentro?"))
+
+    assert response.answer
+    assert response.conversation_id == 1
 
 
 def test_register_unresolved_incident_flow(monkeypatch):
