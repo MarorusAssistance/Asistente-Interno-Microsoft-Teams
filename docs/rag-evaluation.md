@@ -94,6 +94,68 @@ Los reportes se guardan en `evaluation/reports/` como archivos JSON y Markdown. 
 
 `HeuristicJudge` es el modo por defecto y no usa APIs externas. `LLMJudge` es una segunda senal semantica util para evaluaciones manuales, pero no deberia ser obligatorio en CI.
 
+## Trazabilidad con LangSmith y App Insights
+
+La evaluacion genera reportes offline, pero el runtime tambien puede emitir trazas mientras usas `/demo`, `/api/chat` o Teams.
+
+`Application Insights` se usa para operacion:
+
+- errores de `/api/chat`
+- latencias por etapa
+- conteos de chunks y fuentes
+- flags como `needs_clarification` o `should_offer_incident`
+- metadata de provider/modelo
+
+`LangSmith` se usa para diagnosticar calidad:
+
+- pregunta del usuario
+- chunks recuperados con contenido
+- prompt logico enviado al modelo
+- decision estructurada del asistente
+- respuesta final
+
+Variables necesarias para LangSmith:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=<langsmith-api-key>
+LANGSMITH_PROJECT=internal-assistant-mvp
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+Advertencia: cuando `LANGSMITH_TRACING=true`, LangSmith recibe prompts, chunks y respuestas. Activalo solo con datasets ficticios o con una politica clara de tratamiento de datos.
+
+Consultas Kusto utiles en App Insights:
+
+```kusto
+exceptions
+| where timestamp > ago(24h)
+| where cloud_RoleName has "app" or outerMessage has "/api/chat"
+| order by timestamp desc
+```
+
+```kusto
+dependencies
+| where timestamp > ago(24h)
+| where name in ("api.chat", "chat.request", "chat.retrieve", "chat.generate_answer", "chat.response")
+| summarize count(), avg(duration), percentiles(duration, 50, 95) by name
+| order by name asc
+```
+
+```kusto
+dependencies
+| where timestamp > ago(24h)
+| where name == "chat.response"
+| summarize count() by tostring(customDimensions["needs_clarification"])
+```
+
+```kusto
+dependencies
+| where timestamp > ago(24h)
+| where name in ("llm.chat_completion", "llm.embeddings")
+| summarize errors=countif(success == false), calls=count() by name, tostring(customDimensions["llm.provider"]), tostring(customDimensions["llm.model"])
+```
+
 ## Como evitar gastar tokens
 
 - usa `mock` para smoke tests

@@ -5,6 +5,7 @@ from openai import OpenAI
 from internal_assistant.config import get_settings
 from internal_assistant.llm.base import LLMProvider
 from internal_assistant.llm.common import build_chat_messages, parse_assistant_decision, validate_embedding_dimensions
+from internal_assistant.observability.tracing import set_span_attributes, start_span
 from internal_assistant.schemas.chat import AssistantDecision
 
 
@@ -26,24 +27,55 @@ class OpenAICompatibleProvider(LLMProvider):
         )
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        embeddings: list[list[float]] = []
-        for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
-            batch = texts[start : start + EMBEDDING_BATCH_SIZE]
-            response = self.client.embeddings.create(
-                model=self.settings.embedding_model,
-                input=batch,
-            )
-            embeddings.extend(item.embedding for item in response.data)
-        return validate_embedding_dimensions(embeddings, self.settings.embedding_dimensions)
+        with start_span(
+            "llm.embeddings",
+            {
+                "llm.provider": "openai_compatible",
+                "llm.embedding_model": self.settings.embedding_model,
+                "llm.embedding_dimensions": self.settings.embedding_dimensions,
+                "llm.embedding_input_count": len(texts),
+            },
+        ) as span:
+            embeddings: list[list[float]] = []
+            for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
+                batch = texts[start : start + EMBEDDING_BATCH_SIZE]
+                response = self.client.embeddings.create(
+                    model=self.settings.embedding_model,
+                    input=batch,
+                )
+                embeddings.extend(item.embedding for item in response.data)
+            validated = validate_embedding_dimensions(embeddings, self.settings.embedding_dimensions)
+            set_span_attributes(span, {"llm.embedding_output_count": len(validated)})
+            return validated
 
     def generate_chat_response(self, *, question: str, context_chunks: list[dict], conversation_state: dict) -> AssistantDecision:
-        response = self.client.chat.completions.create(
-            model=self.settings.chat_model,
-            temperature=0.1,
-            messages=build_chat_messages(
-                question=question,
-                context_chunks=context_chunks,
-                conversation_state=conversation_state,
-            ),
-        )
-        return parse_assistant_decision(response.choices[0].message.content)
+        with start_span(
+            "llm.chat_completion",
+            {
+                "llm.provider": "openai_compatible",
+                "llm.chat_model": self.settings.chat_model,
+                "llm.context_chunk_count": len(context_chunks),
+                "question.length": len(question),
+                "llm.timeout_seconds": self.settings.llm_timeout_seconds,
+            },
+        ) as span:
+            response = self.client.chat.completions.create(
+                model=self.settings.chat_model,
+                temperature=0.1,
+                messages=build_chat_messages(
+                    question=question,
+                    context_chunks=context_chunks,
+                    conversation_state=conversation_state,
+                ),
+            )
+            decision = parse_assistant_decision(response.choices[0].message.content)
+            set_span_attributes(
+                span,
+                {
+                    "llm.needs_clarification": decision.needs_clarification,
+                    "llm.should_offer_incident": decision.should_offer_incident,
+                    "llm.used_chunk_ids": decision.used_chunk_ids,
+                    "llm.answer_length": len(decision.answer or ""),
+                },
+            )
+            return decision

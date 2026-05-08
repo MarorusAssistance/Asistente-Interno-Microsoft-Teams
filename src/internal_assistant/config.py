@@ -30,6 +30,10 @@ class Settings(BaseSettings):
         default="",
         alias="APPLICATIONINSIGHTS_CONNECTION_STRING",
     )
+    langsmith_tracing: bool = Field(default=False, alias="LANGSMITH_TRACING")
+    langsmith_api_key: str = Field(default="", alias="LANGSMITH_API_KEY")
+    langsmith_project: str = Field(default="internal-assistant-mvp", alias="LANGSMITH_PROJECT")
+    langsmith_endpoint: str = Field(default="https://api.smith.langchain.com", alias="LANGSMITH_ENDPOINT")
     allowed_origins: str = Field(default="", alias="ALLOWED_ORIGINS")
     bot_endpoint: str = Field(default="", alias="BOT_ENDPOINT")
     custom_incidents_api_base_url: str = Field(default="http://localhost:7071", alias="CUSTOM_INCIDENTS_API_BASE_URL")

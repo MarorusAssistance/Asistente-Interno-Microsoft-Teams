@@ -38,6 +38,17 @@ MICROSOFT_APP_TENANT_ID=<entra-tenant-id>
 TEAMS_APP_ID=<teams-app-id>
 ```
 
+Opcional para trazabilidad de calidad RAG:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=<langsmith-api-key>
+LANGSMITH_PROJECT=internal-assistant-mvp
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+`Application Insights` no usa API key en la app. La Web App recibe `APPLICATIONINSIGHTS_CONNECTION_STRING` desde la infraestructura y emite spans operativos sin prompts ni chunks completos.
+
 ## Despliegue manual
 
 ```bash
@@ -53,6 +64,15 @@ TEAMS_APP_ID=<teams-app-id>
 ./scripts/demo_prep.sh cloud
 ./scripts/demo_health_check.sh cloud
 ```
+
+Si activas LangSmith despues de desplegar infraestructura, vuelve a ejecutar:
+
+```bash
+./scripts/configure_app_settings.sh
+./scripts/deploy_app_service.sh
+```
+
+Luego lanza una pregunta desde `/demo` o `/api/chat` y busca un trace `rag.chat` en el proyecto LangSmith configurado.
 
 ## Health checks esperados
 
@@ -79,6 +99,16 @@ python -m uv run alembic upgrade head
 El servidor Flexible Server queda preparado para `pgvector`, pero conviene verificarlo siempre con `scripts/check_cloud_index.sh`.
 
 ## Prueba funcional
+
+Sin Teams, puedes validar la Web App desde la UI integrada:
+
+```text
+https://<webapp>.azurewebsites.net/demo
+```
+
+La consola usa la misma API publicada bajo `/api`, muestra fuentes y permite feedback. Es la ruta recomendada para probar cloud cuando no tienes un tenant de Teams preparado.
+
+Tambien puedes llamar la API directamente:
 
 ```bash
 curl -X POST "https://<webapp>.azurewebsites.net/api/chat" \

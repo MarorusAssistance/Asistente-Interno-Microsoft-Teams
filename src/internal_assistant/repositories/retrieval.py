@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from internal_assistant.models import Chunk, RetrievalLog
+from internal_assistant.observability.tracing import set_span_attributes, start_span
 
 
 class ChunkRepository:
@@ -31,31 +32,58 @@ class ChunkRepository:
         return chunk
 
     def vector_search(self, embedding: list[float], limit: int = 15) -> list[dict]:
-        stmt = text(
-            """
-            SELECT id, source_type, source_id, content, metadata, 1 - (embedding <=> CAST(:embedding AS vector)) AS score
-            FROM chunks
-            WHERE embedding IS NOT NULL
-            ORDER BY embedding <=> CAST(:embedding AS vector)
-            LIMIT :limit
-            """
-        )
-        rows = self.session.execute(stmt, {"embedding": embedding, "limit": limit}).mappings().all()
-        return [dict(row) for row in rows]
+        with start_span(
+            "retrieval.vector_search",
+            {"retrieval.vector.limit": limit, "retrieval.embedding_dimensions": len(embedding)},
+        ) as span:
+            stmt = text(
+                """
+                SELECT id, source_type, source_id, content, metadata, 1 - (embedding <=> CAST(:embedding AS vector)) AS score
+                FROM chunks
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> CAST(:embedding AS vector)
+                LIMIT :limit
+                """
+            )
+            rows = self.session.execute(stmt, {"embedding": embedding, "limit": limit}).mappings().all()
+            payload = [dict(row) for row in rows]
+            scores = [float(row.get("score") or 0.0) for row in payload]
+            set_span_attributes(
+                span,
+                {
+                    "retrieval.vector.result_count": len(payload),
+                    "retrieval.vector.chunk_ids": [row["id"] for row in payload],
+                    "retrieval.vector.score_min": min(scores) if scores else 0.0,
+                    "retrieval.vector.score_max": max(scores) if scores else 0.0,
+                },
+            )
+            return payload
 
     def text_search(self, query: str, limit: int = 15) -> list[dict]:
-        stmt = text(
-            """
-            SELECT id, source_type, source_id, content, metadata,
-                   ts_rank_cd(full_text_tsvector, plainto_tsquery('spanish', :query)) AS score
-            FROM chunks
-            WHERE full_text_tsvector @@ plainto_tsquery('spanish', :query)
-            ORDER BY score DESC
-            LIMIT :limit
-            """
-        )
-        rows = self.session.execute(stmt, {"query": query, "limit": limit}).mappings().all()
-        return [dict(row) for row in rows]
+        with start_span("retrieval.text_search", {"retrieval.text.limit": limit, "query.length": len(query)}) as span:
+            stmt = text(
+                """
+                SELECT id, source_type, source_id, content, metadata,
+                       ts_rank_cd(full_text_tsvector, plainto_tsquery('spanish', :query)) AS score
+                FROM chunks
+                WHERE full_text_tsvector @@ plainto_tsquery('spanish', :query)
+                ORDER BY score DESC
+                LIMIT :limit
+                """
+            )
+            rows = self.session.execute(stmt, {"query": query, "limit": limit}).mappings().all()
+            payload = [dict(row) for row in rows]
+            scores = [float(row.get("score") or 0.0) for row in payload]
+            set_span_attributes(
+                span,
+                {
+                    "retrieval.text.result_count": len(payload),
+                    "retrieval.text.chunk_ids": [row["id"] for row in payload],
+                    "retrieval.text.score_min": min(scores) if scores else 0.0,
+                    "retrieval.text.score_max": max(scores) if scores else 0.0,
+                },
+            )
+            return payload
 
 
 class RetrievalLogRepository:

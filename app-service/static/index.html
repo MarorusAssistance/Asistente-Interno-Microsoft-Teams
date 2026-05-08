@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LogiAssist Demo Console</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Internal Assistant MVP</p>
+            <h1>LogiAssist Demo Console</h1>
+          </div>
+          <div class="status-strip" aria-live="polite">
+            <span id="healthStatus" class="pill neutral">Health sin comprobar</span>
+            <span id="deepStatus" class="pill neutral">Deep health sin comprobar</span>
+          </div>
+        </header>
+
+        <section class="connection-panel" aria-label="Configuracion de API">
+          <label class="field wide">
+            <span>API base</span>
+            <input id="apiBaseInput" type="url" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>User ID</span>
+            <input id="userIdInput" type="text" spellcheck="false" />
+          </label>
+          <div class="button-row">
+            <button id="sameOriginButton" type="button">Este host</button>
+            <button id="localButton" type="button">Local</button>
+            <button id="healthButton" type="button">Comprobar</button>
+          </div>
+        </section>
+
+        <section class="chat-panel" aria-label="Conversacion">
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <form id="chatForm" class="composer">
+            <textarea
+              id="messageInput"
+              rows="3"
+              placeholder="Pregunta algo sobre operaciones, seguridad, onboarding o incidencias..."
+              required
+            ></textarea>
+            <button id="sendButton" type="submit">Enviar</button>
+          </form>
+        </section>
+      </section>
+
+      <aside class="side-panel">
+        <section class="panel-section">
+          <div class="section-title">
+            <h2>Preguntas de demo</h2>
+            <button id="resetButton" type="button" class="text-button">Nueva conversacion</button>
+          </div>
+          <div id="samples" class="sample-list"></div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">
+            <h2>Fuentes</h2>
+            <span id="sourceCount" class="counter">0</span>
+          </div>
+          <div id="sources" class="source-list empty">Sin fuentes todavia.</div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">
+            <h2>Feedback</h2>
+          </div>
+          <div class="feedback-actions">
+            <button id="usefulButton" type="button" disabled>Util</button>
+            <button id="notUsefulButton" type="button" disabled>No util</button>
+          </div>
+          <p id="feedbackStatus" class="hint">Disponible tras recibir una respuesta.</p>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">
+            <h2>Ultima respuesta</h2>
+          </div>
+          <pre id="rawResponse" class="raw-output">{}</pre>
+        </section>
+      </aside>
+    </main>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

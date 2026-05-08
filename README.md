@@ -34,7 +34,7 @@ En una operacion interna es habitual que el conocimiento este repartido entre pr
 
 ## Arquitectura resumida
 
-- `app-service/`: FastAPI principal con `/api/chat`, `/api/messages`, health checks, feedback y endpoints de consulta.
+- `app-service/`: FastAPI principal con `/api/chat`, `/api/messages`, health checks, feedback, endpoints de consulta y una UI web sencilla en `/demo`.
 - `functions/custom-incidents-api-function/`: sistema fuente simulado para incidencias.
 - `functions/indexer-function/`: reindexado HTTP y mantenimiento de chunks/embeddings.
 - `src/internal_assistant/`: dominio compartido, providers LLM, RAG, cards, runtime y repositorios.
@@ -174,6 +174,18 @@ Arranca FastAPI en local:
 python -m uv run uvicorn main:app --app-dir app-service --host 0.0.0.0 --port 8000
 ```
 
+Abre la consola web:
+
+```text
+http://localhost:8000/demo
+```
+
+Desde esa pantalla puedes comprobar `health`, hacer preguntas, ver fuentes, enviar feedback y cambiar la `API base` si quieres apuntar a una Web App de Azure. Para probar cloud sin Teams, abre:
+
+```text
+https://<webapp>.azurewebsites.net/demo
+```
+
 Consulta de ejemplo:
 
 ```bash
@@ -221,6 +233,24 @@ python -m uv run python scripts/compare_retrieval_configs.py
 Los reportes quedan en `evaluation/reports/` como archivos JSON y Markdown. No se envian a Table Storage ni a otro artifact remoto por defecto.
 
 Mas detalle en [docs/rag-evaluation.md](/c:/Users/maror/Projects/Personal/Asistente-Interno-Microsoft-Teams/docs/rag-evaluation.md).
+
+## Trazabilidad RAG
+
+La app puede enviar trazas a dos sistemas con objetivos distintos:
+
+- `Application Insights`: operacion, errores, latencias y metadata segura del flujo `/api/chat`.
+- `LangSmith`: depuracion de calidad RAG con pregunta, chunks recuperados, prompt logico y respuesta final.
+
+Para activar LangSmith:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=<langsmith-api-key>
+LANGSMITH_PROJECT=internal-assistant-mvp
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+No hay una variable para ocultar contenido en LangSmith: si esta activo, recibe prompts, contexto recuperado y respuestas para poder diagnosticar calidad. App Insights no recibe ese contenido completo.
 
 ## Como desplegarlo en Azure
 

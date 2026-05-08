@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from sqlalchemy.orm import Session
 
 from internal_assistant.repositories.retrieval import ChunkRepository
+from internal_assistant.observability.tracing import retrieval_span_attributes, set_span_attributes, start_span
 
 
 @dataclass(slots=True)
@@ -75,42 +76,63 @@ class HybridRetriever:
         if limit is not None:
             effective = replace(effective, top_k=max(1, int(limit))).normalized()
 
-        vector_rows = self.chunk_repository.vector_search(query_embedding, limit=effective.vector_candidates)
-        text_rows = self.chunk_repository.text_search(query, limit=effective.text_candidates)
+        with start_span(
+            "retrieval.hybrid_search",
+            {
+                "query.length": len(query),
+                "retrieval.top_k": effective.top_k,
+                "retrieval.vector_weight": effective.vector_weight,
+                "retrieval.text_weight": effective.text_weight,
+                "retrieval.vector_candidates": effective.vector_candidates,
+                "retrieval.text_candidates": effective.text_candidates,
+            },
+        ) as span:
+            vector_rows = self.chunk_repository.vector_search(query_embedding, limit=effective.vector_candidates)
+            text_rows = self.chunk_repository.text_search(query, limit=effective.text_candidates)
 
-        merged: dict[int, RetrievedChunk] = {}
-        for row in vector_rows:
-            merged[row["id"]] = RetrievedChunk(
-                chunk_id=row["id"],
-                source_type=row["source_type"],
-                source_id=row["source_id"],
-                content=row["content"],
-                metadata=row["metadata"] or {},
-                vector_score=float(row["score"] or 0.0),
-            )
+            with start_span(
+                "retrieval.merge_rank",
+                {
+                    "retrieval.vector_candidates_returned": len(vector_rows),
+                    "retrieval.text_candidates_returned": len(text_rows),
+                },
+            ) as merge_span:
+                merged: dict[int, RetrievedChunk] = {}
+                for row in vector_rows:
+                    merged[row["id"]] = RetrievedChunk(
+                        chunk_id=row["id"],
+                        source_type=row["source_type"],
+                        source_id=row["source_id"],
+                        content=row["content"],
+                        metadata=row["metadata"] or {},
+                        vector_score=float(row["score"] or 0.0),
+                    )
 
-        for row in text_rows:
-            existing = merged.get(row["id"])
-            if existing:
-                existing.text_score = float(row["score"] or 0.0)
-            else:
-                merged[row["id"]] = RetrievedChunk(
-                    chunk_id=row["id"],
-                    source_type=row["source_type"],
-                    source_id=row["source_id"],
-                    content=row["content"],
-                    metadata=row["metadata"] or {},
-                    text_score=float(row["score"] or 0.0),
-                )
+                for row in text_rows:
+                    existing = merged.get(row["id"])
+                    if existing:
+                        existing.text_score = float(row["score"] or 0.0)
+                    else:
+                        merged[row["id"]] = RetrievedChunk(
+                            chunk_id=row["id"],
+                            source_type=row["source_type"],
+                            source_id=row["source_id"],
+                            content=row["content"],
+                            metadata=row["metadata"] or {},
+                            text_score=float(row["score"] or 0.0),
+                        )
 
-        ordered = list(merged.values())
-        vector_norm = _normalize([chunk.vector_score for chunk in ordered])
-        text_norm = _normalize([chunk.text_score for chunk in ordered])
+                ordered = list(merged.values())
+                vector_norm = _normalize([chunk.vector_score for chunk in ordered])
+                text_norm = _normalize([chunk.text_score for chunk in ordered])
 
-        for idx, chunk in enumerate(ordered):
-            chunk.final_score = (
-                effective.vector_weight * vector_norm[idx] + effective.text_weight * text_norm[idx]
-            )
+                for idx, chunk in enumerate(ordered):
+                    chunk.final_score = (
+                        effective.vector_weight * vector_norm[idx] + effective.text_weight * text_norm[idx]
+                    )
 
-        ordered.sort(key=lambda item: item.final_score, reverse=True)
-        return ordered[: effective.top_k]
+                ordered.sort(key=lambda item: item.final_score, reverse=True)
+                results = ordered[: effective.top_k]
+                set_span_attributes(merge_span, retrieval_span_attributes(retrieved=results, prefix="retrieval.merged"))
+            set_span_attributes(span, retrieval_span_attributes(retrieved=results))
+            return results

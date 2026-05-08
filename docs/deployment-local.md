@@ -71,6 +71,16 @@ python -m uv run uvicorn local_main:app --app-dir functions/indexer-function --h
 
 ## Smoke test sin Teams
 
+La forma mas comoda para demo es abrir:
+
+```text
+http://localhost:8000/demo
+```
+
+La pantalla permite comprobar `health`, enviar preguntas a `/api/chat`, ver fuentes, enviar feedback y resetear la conversacion. No depende de Teams ni de Bot Framework.
+
+Tambien puedes llamar la API directamente:
+
 ```bash
 curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
@@ -85,6 +95,7 @@ curl -X POST http://localhost:8000/api/chat \
 - `http://localhost:8000/api/health`
 - `http://localhost:8000/api/health/deep`
 - `http://localhost:8000/api/chat`
+- `http://localhost:8000/demo`
 - `http://localhost:7071/health`
 - `http://localhost:7072/health`
 

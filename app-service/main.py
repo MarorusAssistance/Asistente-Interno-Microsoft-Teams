@@ -9,7 +9,8 @@ from botbuilder.core import ActivityHandler, BotFrameworkAdapter, BotFrameworkAd
 from botbuilder.schema import Activity, ActivityTypes
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -24,7 +25,8 @@ if SRC_ROOT.exists() and str(SRC_ROOT) not in sys.path:
 from internal_assistant.chat import ChatService
 from internal_assistant.config import get_settings
 from internal_assistant.db import get_session, session_scope
-from internal_assistant.observability import configure_logging, get_logger
+from internal_assistant.observability import configure_logging, get_logger, start_span
+from internal_assistant.observability.tracing import set_span_attributes, user_hash
 from internal_assistant.repositories import DocumentRepository, IncidentRepository
 from internal_assistant.runtime import assert_runtime_settings, build_health_report
 from internal_assistant.schemas import ChatRequest, ChatResponse, DocumentRead, FeedbackCreate, IncidentRead
@@ -33,6 +35,7 @@ from internal_assistant.teams import coerce_activity_input
 configure_logging()
 settings = get_settings()
 logger = get_logger(__name__)
+STATIC_ROOT = Path(__file__).resolve().parent / "static"
 
 
 @asynccontextmanager
@@ -42,6 +45,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="internal-assistant-mvp", version="0.1.0", lifespan=lifespan)
+if STATIC_ROOT.exists():
+    app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
+
 adapter = BotFrameworkAdapter(
     BotFrameworkAdapterSettings(
         settings.microsoft_app_id,
@@ -109,6 +115,16 @@ adapter.on_turn_error = on_turn_error
 DbSession = Annotated[Session, Depends(get_session)]
 
 
+@app.get("/", include_in_schema=False)
+def demo_index() -> FileResponse:
+    return FileResponse(STATIC_ROOT / "index.html")
+
+
+@app.get("/demo", include_in_schema=False)
+def demo_ui() -> FileResponse:
+    return FileResponse(STATIC_ROOT / "index.html")
+
+
 @app.get("/api/health")
 def health(session: DbSession) -> dict:
     session.execute(text("SELECT 1"))
@@ -123,8 +139,28 @@ def health_deep(session: DbSession) -> JSONResponse:
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, session: DbSession) -> ChatResponse:
-    service = ChatService(session)
-    return service.handle_chat(payload)
+    with start_span(
+        "api.chat",
+        {
+            "channel": payload.channel,
+            "conversation_id": payload.conversation_id or 0,
+            "user_id_hash": user_hash(payload.user_id),
+            "message.length": len(payload.message),
+        },
+    ) as span:
+        service = ChatService(session)
+        response = service.handle_chat(payload)
+        set_span_attributes(
+            span,
+            {
+                "response.conversation_id": response.conversation_id,
+                "response.message_id": response.message_id or 0,
+                "response.answer_length": len(response.answer),
+                "response.source_count": len(response.sources),
+                "response.needs_clarification": response.needs_clarification,
+            },
+        )
+        return response
 
 
 @app.post("/api/messages")
