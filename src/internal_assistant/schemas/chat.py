@@ -63,7 +63,11 @@ class ChatPlan(BaseModel):
     )
     @classmethod
     def normalize_optional_text(cls, value):
-        return "" if value is None else value
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return " ".join(str(item).strip() for item in value if str(item).strip())
+        return value
 
     @field_validator("expected_source_preference", "mentioned_systems", mode="before")
     @classmethod

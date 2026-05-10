@@ -7,7 +7,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from internal_assistant.cards import build_feedback_card, build_incident_confirmation_card, build_sources_card
-from internal_assistant.chat.evidence import assess_evidence, build_policy_clarification_answer
+from internal_assistant.chat.evidence import assess_evidence, build_policy_clarification_answer, detect_query_signals
 from internal_assistant.chat.incident_draft import build_confirmation_text, extract_incident_fields, missing_fields, validate_draft
 from internal_assistant.chat.intents import detect_intent
 from internal_assistant.chat.memory import build_message_memory_text, summarize_message
@@ -417,10 +417,65 @@ class ChatService:
             trace_run=trace_run,
         )
         planner_payload = plan.model_dump()
+        early_signals = detect_query_signals(request.message)
+
+        if plan.should_ask_clarification_first and early_signals.policy_question:
+            plan.should_ask_clarification_first = False
+            plan.needs_knowledge_index = True
+            if not plan.knowledge_index_query.strip():
+                plan.knowledge_index_query = request.message
+            planner_payload = plan.model_dump()
+            planner_payload["planner_override"] = "policy_question_requires_index_search"
 
         if plan.should_ask_clarification_first:
             clarification_attempts += 1
             state["clarification_attempts"] = clarification_attempts
+            if clarification_attempts >= 3:
+                state["offer_incident"] = True
+                answer = self._build_incident_offer_answer()
+                self._trace_formatted_response(
+                    trace_run,
+                    answer=answer,
+                    sources=[],
+                    related_incidents=[],
+                    conversation_id=conversation_id,
+                    actual_behavior="abstain_and_offer_incident_registration",
+                    decision={"planner_output": planner_payload, "policy_decision": "offer_incident_after_planner_clarifications"},
+                )
+                latency_ms = int((time.perf_counter() - started_at) * 1000)
+                if write_retrieval_logs:
+                    self._write_retrieval_log(
+                        conversation_id=conversation_id,
+                        message_id=user_message_id,
+                        query=request.message,
+                        intent=intent,
+                        answer=answer,
+                        confidence=0.0,
+                        latency_ms=latency_ms,
+                    )
+                return {
+                    "conversation_id": conversation_id,
+                    "answer": answer,
+                    "sources": [],
+                    "related_incidents": [],
+                    "needs_clarification": False,
+                    "clarification_attempt": clarification_attempts,
+                    "should_offer_incident": True,
+                    "adaptive_card": None,
+                    "fallback_text": answer,
+                    "_meta": {
+                        "retrieved": [],
+                        "conversation_memory": [],
+                        "confidence": 0.0,
+                        "decision": None,
+                        "context_chunks": [],
+                        "planner_output": planner_payload,
+                        "actual_behavior": "abstain_and_offer_incident_registration",
+                        "latency_ms": latency_ms,
+                    },
+                    "_state": state,
+                }
+
             answer = self._build_planner_clarification_answer(plan, clarification_attempts)
             self._trace_formatted_response(
                 trace_run,
@@ -515,8 +570,42 @@ class ChatService:
                     }
                 )
 
+        incident_source_ids = sorted({item.source_id for item in retrieved if item.source_type == "incident"})
+        related_incident_objects = self.incidents.list_related(incident_source_ids)
+        related_incidents_by_id = {int(incident.id): incident for incident in related_incident_objects}
+
         evidence_query = request.message
-        query_signals, evidence_assessment = assess_evidence(evidence_query, retrieved)
+        with start_span(
+            "chat.evidence_gate",
+            {
+                "conversation_id": conversation_id,
+                "retrieved.count": len(retrieved),
+                "memory.count": len(memory_results),
+            },
+        ) as evidence_span:
+            query_signals, evidence_assessment = assess_evidence(
+                evidence_query,
+                retrieved,
+                planner_output=planner_payload,
+                memory_results=memory_results,
+                related_incidents_by_id=related_incidents_by_id,
+            )
+            set_span_attributes(
+                evidence_span,
+                {
+                    "evidence.mode": evidence_assessment.evidence_mode,
+                    "evidence.semantic_confidence": evidence_assessment.semantic_confidence,
+                    "evidence.should_block": evidence_assessment.should_block_answer,
+                    "evidence.reason_code": evidence_assessment.reason_code,
+                    "evidence.allowed_behavior": evidence_assessment.allowed_behavior,
+                    "evidence.resolved_incident_count": evidence_assessment.resolved_incident_count,
+                    "evidence.unresolved_incident_count": evidence_assessment.unresolved_incident_count,
+                    "signals.new_issue": query_signals.new_issue,
+                    "signals.resolved_case_request": query_signals.resolved_case_request,
+                    "signals.unresolved_case_request": query_signals.unresolved_case_request,
+                    "signals.status_request": query_signals.status_request,
+                },
+            )
         datasource_status = {
             "conversation_memory": {
                 "requested": plan.needs_conversation_memory,
@@ -528,6 +617,13 @@ class ChatService:
                 "query": knowledge_query if plan.needs_knowledge_index else "",
                 "result_count": len(retrieved),
                 "confidence": confidence,
+            },
+            "evidence": {
+                "mode": evidence_assessment.evidence_mode,
+                "semantic_confidence": evidence_assessment.semantic_confidence,
+                "allowed_behavior": evidence_assessment.allowed_behavior,
+                "blocking_reason": evidence_assessment.blocking_reason,
+                "direct_chunk_ids": evidence_assessment.direct_chunk_ids,
             },
         }
 
@@ -631,7 +727,7 @@ class ChatService:
                 "_state": state,
             }
 
-        if plan.needs_knowledge_index and not memory_results and self._should_pre_gate_answer(evidence_assessment):
+        if plan.needs_knowledge_index and self._should_pre_gate_answer(evidence_assessment):
             clarification_attempts += 1
             state["clarification_attempts"] = clarification_attempts
             policy_payload = {
@@ -825,9 +921,12 @@ class ChatService:
                     "llm.should_offer_incident": decision.should_offer_incident,
                     "llm.used_chunk_ids": decision.used_chunk_ids,
                     "llm.answer_length": len(decision.answer or ""),
+                    "evidence.mode": evidence_assessment.evidence_mode,
+                    "evidence.semantic_confidence": evidence_assessment.semantic_confidence,
+                    "evidence.allowed_behavior": evidence_assessment.allowed_behavior,
                 },
             )
-        if plan.needs_knowledge_index and not memory_results and self._should_policy_override_decision(evidence_assessment, decision):
+        if plan.needs_knowledge_index and self._should_policy_override_decision(evidence_assessment, decision):
             clarification_attempts += 1
             state["clarification_attempts"] = clarification_attempts
             policy_payload = {
@@ -1001,6 +1100,8 @@ class ChatService:
             }
         state["clarification_attempts"] = 0
         state["offer_incident"] = False
+        actual_behavior = self._actual_behavior_for_answer(evidence_assessment, decision)
+        should_offer_incident = False
         related_incidents = [
             {
                 "id": incident.id,
@@ -1008,9 +1109,7 @@ class ChatService:
                 "title": incident.title,
                 "status": incident.status,
             }
-            for incident in self.incidents.list_related(
-                list({item.source_id for item in retrieved if item.source_type == "incident"})
-            )
+            for incident in related_incident_objects
         ]
         answer = self._format_answer_for_demo(decision.answer, related_incidents=related_incidents)
         self._trace_formatted_response(
@@ -1019,7 +1118,7 @@ class ChatService:
             sources=[source.model_dump() for source in sources],
             related_incidents=related_incidents,
             conversation_id=conversation_id,
-            actual_behavior="ask_clarification" if decision.needs_clarification else "answer_with_sources",
+            actual_behavior=actual_behavior,
             decision=serialize_decision_for_langsmith(decision),
         )
         latency_ms = int((time.perf_counter() - started_at) * 1000)
@@ -1046,7 +1145,7 @@ class ChatService:
             "related_incidents": related_incidents,
             "needs_clarification": decision.needs_clarification,
             "clarification_attempt": 0,
-            "should_offer_incident": decision.should_offer_incident,
+            "should_offer_incident": should_offer_incident,
             "adaptive_card": build_sources_card(answer, [source.model_dump() for source in sources], related_incidents),
             "fallback_text": self._build_sources_fallback(answer, sources, related_incidents),
             "_meta": {
@@ -1059,7 +1158,7 @@ class ChatService:
                 "datasource_status": datasource_status,
                 "query_signals": query_signals.to_dict(),
                 "evidence_assessment": evidence_assessment.to_dict(),
-                "actual_behavior": "ask_clarification" if decision.needs_clarification else "answer_with_sources",
+                "actual_behavior": actual_behavior,
                 "latency_ms": latency_ms,
             },
             "_state": state,
@@ -1304,7 +1403,10 @@ class ChatService:
                 logger.warning("No se pudo revertir la transaccion fallida de memoria conversacional")
 
     def _should_pre_gate_answer(self, evidence_assessment: Any) -> bool:
-        return bool(getattr(evidence_assessment, "should_block_answer", False))
+        return bool(
+            getattr(evidence_assessment, "should_block_answer", False)
+            and getattr(evidence_assessment, "semantic_confidence", 0.0) < 0.55
+        )
 
     def _should_policy_override_decision(self, evidence_assessment: Any, decision: Any) -> bool:
         if getattr(decision, "needs_clarification", False) or getattr(decision, "should_offer_incident", False):
@@ -1317,7 +1419,17 @@ class ChatService:
         if not direct_chunk_ids:
             return True
         used_chunk_ids = set(getattr(decision, "used_chunk_ids", []) or [])
-        return bool(used_chunk_ids and not used_chunk_ids.intersection(direct_chunk_ids))
+        if not used_chunk_ids:
+            return True
+        return not bool(used_chunk_ids.intersection(direct_chunk_ids))
+
+    def _actual_behavior_for_answer(self, evidence_assessment: Any, decision: Any) -> str:
+        if getattr(decision, "needs_clarification", False):
+            return "ask_clarification"
+        allowed_behavior = getattr(evidence_assessment, "allowed_behavior", "") or ""
+        if allowed_behavior in {"say_incident_resolved", "say_incident_unresolved"}:
+            return allowed_behavior
+        return "answer_with_sources"
 
     def _trace_response_payload(self, response: ChatResponse) -> dict[str, Any]:
         return {

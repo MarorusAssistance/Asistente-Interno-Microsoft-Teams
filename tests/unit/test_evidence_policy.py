@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from internal_assistant.chat.evidence import assess_evidence, detect_query_signals
 from internal_assistant.rag.retrieval import RetrievedChunk
 
@@ -43,6 +45,62 @@ def test_detects_dissatisfied_followup_signal():
     assert signals.dissatisfied_followup is True
 
 
+def test_detects_resolved_unresolved_and_status_signals():
+    resolved = detect_query_signals("Como se resolvio una visita tecnica en SafeGate")
+    unresolved = detect_query_signals("Hay un caso abierto parecido en AlmaTrack WMS")
+    status = detect_query_signals("Esta resuelta o sigue abierta la ruta en RutaNexo")
+    definitive = detect_query_signals("Hay una solucion definitiva ya documentada para SafeGate")
+
+    assert resolved.resolved_case_request is True
+    assert unresolved.unresolved_case_request is True
+    assert status.status_request is True
+    assert definitive.unresolved_case_request is True
+
+
+def test_resolved_case_allows_direct_resolved_incident():
+    _, assessment = assess_evidence(
+        "Como se resolvio una visita tecnica con acceso rechazado en SafeGate",
+        [chunk(chunk_id=1, source_type="incident", source_id=10, system="SafeGate")],
+        related_incidents_by_id={10: SimpleNamespace(id=10, is_resolved=True, status="resolved")},
+    )
+
+    assert assessment.should_block_answer is False
+    assert assessment.evidence_mode == "direct_resolved_incident"
+    assert assessment.allowed_behavior == "say_incident_resolved"
+    assert assessment.direct_chunk_ids == [1]
+
+
+def test_unresolved_case_allows_direct_open_incident():
+    _, assessment = assess_evidence(
+        "Hay un caso abierto parecido de ubicacion RF en AlmaTrack WMS",
+        [chunk(chunk_id=2, source_type="incident", source_id=11, system="AlmaTrack WMS")],
+        related_incidents_by_id={11: SimpleNamespace(id=11, is_resolved=False, status="open")},
+    )
+
+    assert assessment.should_block_answer is False
+    assert assessment.evidence_mode == "direct_unresolved_incident"
+    assert assessment.allowed_behavior == "say_incident_unresolved"
+    assert assessment.direct_chunk_ids == [2]
+
+
+def test_status_request_prefers_open_incident_when_user_asks_if_still_open():
+    _, assessment = assess_evidence(
+        "En RutaNexo una ruta queda congelada. Esta resuelta o sigue abierta",
+        [
+            chunk(chunk_id=1, source_type="incident", source_id=10, system="RutaNexo"),
+            chunk(chunk_id=2, source_type="incident", source_id=11, system="RutaNexo"),
+        ],
+        related_incidents_by_id={
+            10: SimpleNamespace(id=10, is_resolved=True, status="resolved"),
+            11: SimpleNamespace(id=11, is_resolved=False, status="open"),
+        },
+    )
+
+    assert assessment.should_block_answer is False
+    assert assessment.allowed_behavior == "say_incident_unresolved"
+    assert assessment.direct_chunk_ids == [2]
+
+
 def test_marks_related_only_for_only_resolved_incidents():
     _, assessment = assess_evidence(
         "No encuentro solucion para un error nuevo en AlmaTrack WMS",
@@ -66,3 +124,15 @@ def test_marks_system_mismatch():
     assert assessment.system_mismatch is True
     assert assessment.should_block_answer is True
     assert assessment.reason_code == "source_system_mismatch"
+
+
+def test_planner_hallucinated_system_does_not_create_hard_mismatch():
+    _, assessment = assess_evidence(
+        "Soy nuevo en operaciones. Que pasos de onboarding debo completar?",
+        [chunk(chunk_id=1, source_type="document", source_id=10, system="OnboardHub")],
+        planner_output={"mentioned_systems": ["LogiCore ERP"]},
+    )
+
+    assert assessment.system_mismatch is False
+    assert assessment.should_block_answer is False
+    assert assessment.evidence_mode == "direct_document"

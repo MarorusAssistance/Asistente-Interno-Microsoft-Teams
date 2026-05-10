@@ -63,6 +63,16 @@ def test_chat_plan_fallback_uses_original_message_as_index_query():
     assert plan.knowledge_index_query == "pregunta original"
 
 
+def test_chat_plan_normalizes_query_lists_from_llm():
+    plan = ChatPlan(
+        knowledge_index_query=["procedimiento", "validacion manual"],
+        conversation_memory_query=["contexto", "anterior"],
+    )
+
+    assert plan.knowledge_index_query == "procedimiento validacion manual"
+    assert plan.conversation_memory_query == "contexto anterior"
+
+
 def test_memory_text_includes_raw_summary_and_metadata():
     summary = summarize_message("Soy nuevo en operaciones y necesito onboarding.")
     memory_text = build_message_memory_text(

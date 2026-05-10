@@ -120,6 +120,67 @@ def test_low_confidence_flow_asks_for_clarification_then_offers_incident(monkeyp
     assert third.should_offer_incident is True
 
 
+def test_planner_clarification_flow_offers_incident_after_third_attempt(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    provider = StaticDecisionProvider(
+        AssistantDecision(answer="No debe llamarse al generador final."),
+        plan=ChatPlan(
+            should_ask_clarification_first=True,
+            needs_knowledge_index=False,
+            reason="Falta contexto operativo",
+        ),
+    )
+    service = build_service([], llm_provider=provider)
+
+    first = service.handle_chat(ChatRequest(user_id="u1", message="Sigue fallando"))
+    second = service.handle_chat(ChatRequest(conversation_id=first.conversation_id, user_id="u1", message="No tengo mas detalle"))
+    third = service.handle_chat(ChatRequest(conversation_id=first.conversation_id, user_id="u1", message="Necesito dejar constancia"))
+
+    assert first.needs_clarification is True
+    assert second.needs_clarification is True
+    assert third.needs_clarification is False
+    assert third.should_offer_incident is True
+    assert "registrar una incidencia" in third.answer
+    assert provider.calls == 0
+
+
+def test_policy_question_overrides_planner_clarification_and_searches_index(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    provider = StaticDecisionProvider(
+        AssistantDecision(
+            answer="No se deben resolver cambios maestros con atajos no documentados.",
+            needs_clarification=False,
+            used_chunk_ids=[31],
+        ),
+        plan=ChatPlan(
+            should_ask_clarification_first=True,
+            needs_knowledge_index=False,
+            reason="Falta sistema concreto",
+        ),
+    )
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=31,
+                source_type="document",
+                source_id=20,
+                content="Los cambios maestros no deben resolverse con atajos manuales no documentados.",
+                system="LogiCore ERP",
+            )
+        ],
+        llm_provider=provider,
+    )
+
+    response = service.handle_chat(
+        ChatRequest(user_id="u1", message="Se pueden resolver cambios maestros urgentes con atajos manuales no documentados")
+    )
+
+    assert response.needs_clarification is False
+    assert response.sources
+    assert "atajos" in response.answer
+    assert provider.calls == 1
+
+
 def test_chat_response_with_sources_uses_retrieved_chunks(monkeypatch):
     monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
     results = [
@@ -338,6 +399,106 @@ def test_system_mismatch_is_policy_clarification(monkeypatch):
     assert response.sources == []
     assert "no pertenecen al sistema" in response.answer
     assert provider.calls == 0
+
+
+def test_resolved_incident_request_answers_with_direct_incident(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    provider = StaticDecisionProvider(
+        AssistantDecision(
+            answer="El caso se resolvio reemitiendo la credencial temporal y validando el acceso.",
+            needs_clarification=False,
+            used_chunk_ids=[21],
+        )
+    )
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=21,
+                source_type="incident",
+                source_id=44,
+                content="Incidencia resuelta de visita tecnica en SafeGate.",
+                system="SafeGate",
+            )
+        ],
+        llm_provider=provider,
+    )
+    service.incidents.items = [
+        SimpleNamespace(id=44, external_id="INC-044", title="Visita tecnica rechazada", status="resolved", is_resolved=True)
+    ]
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Tengo una visita tecnica con acceso temporal rechazado en SafeGate. Como se resolvio el caso conocido"))
+
+    assert response.needs_clarification is False
+    assert response.sources
+    assert "reemit" in response.answer
+    assert provider.calls == 1
+    assert service.retrieval_logs.items[-1]["was_answered"] is True
+
+
+def test_unresolved_incident_request_answers_with_open_incident(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    provider = StaticDecisionProvider(
+        AssistantDecision(
+            answer="El caso parecido sigue abierto y no tiene resolucion documentada.",
+            needs_clarification=False,
+            used_chunk_ids=[22],
+        )
+    )
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=22,
+                source_type="incident",
+                source_id=56,
+                content="Incidencia abierta de ubicacion RF inconsistente en AlmaTrack WMS.",
+                system="AlmaTrack WMS",
+            )
+        ],
+        llm_provider=provider,
+    )
+    service.incidents.items = [
+        SimpleNamespace(id=56, external_id="INC-056", title="Ubicacion RF inconsistente", status="open", is_resolved=False)
+    ]
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Tengo una ubicacion RF inconsistente despues de una reposicion en AlmaTrack WMS. Hay un caso abierto parecido"))
+
+    assert response.needs_clarification is False
+    assert response.sources
+    assert "sigue abierto" in response.answer
+    assert provider.calls == 1
+
+
+def test_status_request_answers_when_single_incident_status_is_available(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    provider = StaticDecisionProvider(
+        AssistantDecision(
+            answer="La ruta congelada sigue abierta y requiere revision operativa.",
+            needs_clarification=False,
+            used_chunk_ids=[23],
+        )
+    )
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=23,
+                source_type="incident",
+                source_id=55,
+                content="Incidencia abierta de ruta congelada en RutaNexo.",
+                system="RutaNexo",
+            )
+        ],
+        llm_provider=provider,
+    )
+    service.incidents.items = [
+        SimpleNamespace(id=55, external_id="INC-055", title="Ruta congelada", status="open", is_resolved=False)
+    ]
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="En RutaNexo una ruta queda congelada tras cambiar una parada prioritaria. Esta resuelta o sigue abierta"))
+
+    assert response.needs_clarification is False
+    assert response.sources
+    assert "sigue abierta" in response.answer
+    assert provider.calls == 1
 
 
 def test_post_gate_overrides_llm_answer_when_policy_is_restrictive(monkeypatch):
