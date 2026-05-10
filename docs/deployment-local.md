@@ -74,7 +74,7 @@ python -m uv run uvicorn local_main:app --app-dir functions/indexer-function --h
 La forma mas comoda para demo es abrir:
 
 ```text
-http://localhost:8000/demo
+http://100.93.82.63:8000/demo
 ```
 
 La pantalla permite comprobar `health`, enviar preguntas a `/api/chat`, ver fuentes, enviar feedback y resetear la conversacion. No depende de Teams ni de Bot Framework.
@@ -82,7 +82,7 @@ La pantalla permite comprobar `health`, enviar preguntas a `/api/chat`, ver fuen
 Tambien puedes llamar la API directamente:
 
 ```bash
-curl -X POST http://localhost:8000/api/chat \
+curl -X POST http://100.93.82.63:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "u-demo",
@@ -92,12 +92,12 @@ curl -X POST http://localhost:8000/api/chat \
 
 ## Endpoints utiles
 
-- `http://localhost:8000/api/health`
-- `http://localhost:8000/api/health/deep`
-- `http://localhost:8000/api/chat`
-- `http://localhost:8000/demo`
-- `http://localhost:7071/health`
-- `http://localhost:7072/health`
+- `http://100.93.82.63:8000/api/health`
+- `http://100.93.82.63:8000/api/health/deep`
+- `http://100.93.82.63:8000/api/chat`
+- `http://100.93.82.63:8000/demo`
+- `http://100.93.82.63:7071/health`
+- `http://100.93.82.63:7072/health`
 
 ## Problemas habituales
 

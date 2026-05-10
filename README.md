@@ -177,7 +177,7 @@ python -m uv run uvicorn main:app --app-dir app-service --host 0.0.0.0 --port 80
 Abre la consola web:
 
 ```text
-http://localhost:8000/demo
+http://100.93.82.63:8000/demo
 ```
 
 Desde esa pantalla puedes comprobar `health`, hacer preguntas, ver fuentes, enviar feedback y cambiar la `API base` si quieres apuntar a una Web App de Azure. Para probar cloud sin Teams, abre:
@@ -189,7 +189,7 @@ https://<webapp>.azurewebsites.net/demo
 Consulta de ejemplo:
 
 ```bash
-curl -X POST http://localhost:8000/api/chat \
+curl -X POST http://100.93.82.63:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "u-demo",

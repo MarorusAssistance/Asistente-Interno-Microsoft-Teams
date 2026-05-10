@@ -47,7 +47,7 @@ def test_build_default_provider_uses_openai_when_real_key_exists(monkeypatch):
 def test_build_default_provider_uses_openai_compatible_when_base_url_exists(monkeypatch):
     monkeypatch.setattr(
         "internal_assistant.llm.openai_provider.get_settings",
-        lambda: make_settings(llm_base_url="http://localhost:11434/v1"),
+        lambda: make_settings(llm_base_url="http://100.93.82.63:11434/v1"),
     )
     monkeypatch.setattr("internal_assistant.llm.openai_provider.OpenAICompatibleProvider", lambda: "local")
 
