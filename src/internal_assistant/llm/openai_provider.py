@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from openai import OpenAI
 
 from internal_assistant.config import get_settings
@@ -11,6 +13,7 @@ from internal_assistant.llm.common import (
     parse_chat_plan,
     validate_embedding_dimensions,
 )
+from internal_assistant.llm.streaming import ChatStreamEvent, JsonAnswerStreamExtractor
 from internal_assistant.llm.mock_provider import MockLLMProvider
 from internal_assistant.llm.openai_compatible_provider import OpenAICompatibleProvider
 from internal_assistant.observability.tracing import set_span_attributes, start_span
@@ -82,6 +85,53 @@ class OpenAIProvider(LLMProvider):
             )
             return decision
 
+    def stream_chat_response(
+        self,
+        *,
+        question: str,
+        context_chunks: list[dict],
+        conversation_state: dict,
+    ) -> Iterator[ChatStreamEvent]:
+        with start_span(
+            "llm.chat_completion.stream",
+            {
+                "llm.provider": "openai",
+                "llm.chat_model": self.settings.chat_model,
+                "llm.context_chunk_count": len(context_chunks),
+                "question.length": len(question),
+                "llm.timeout_seconds": self.settings.llm_timeout_seconds,
+            },
+        ) as span:
+            extractor = JsonAnswerStreamExtractor()
+            stream = self.client.chat.completions.create(
+                model=self.settings.chat_model,
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                stream=True,
+                messages=build_chat_messages(
+                    question=question,
+                    context_chunks=context_chunks,
+                    conversation_state=conversation_state,
+                ),
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content if chunk.choices else None
+                for token in extractor.feed(delta or ""):
+                    yield ChatStreamEvent(kind="token", text=token)
+
+            decision = parse_assistant_decision(extractor.raw_json)
+            set_span_attributes(
+                span,
+                {
+                    "llm.needs_clarification": decision.needs_clarification,
+                    "llm.should_offer_incident": decision.should_offer_incident,
+                    "llm.used_chunk_ids": decision.used_chunk_ids,
+                    "llm.answer_length": len(decision.answer or ""),
+                    "llm.streamed": True,
+                },
+            )
+            yield ChatStreamEvent(kind="final", decision=decision)
+
     def plan_chat(self, *, message: str, recent_messages: list[dict], conversation_state: dict) -> ChatPlan:
         with start_span(
             "llm.chat_planner",
@@ -127,6 +177,19 @@ class SplitLLMProvider(LLMProvider):
 
     def generate_chat_response(self, *, question: str, context_chunks: list[dict], conversation_state: dict) -> AssistantDecision:
         return self.chat_provider.generate_chat_response(
+            question=question,
+            context_chunks=context_chunks,
+            conversation_state=conversation_state,
+        )
+
+    def stream_chat_response(
+        self,
+        *,
+        question: str,
+        context_chunks: list[dict],
+        conversation_state: dict,
+    ) -> Iterator[ChatStreamEvent]:
+        yield from self.chat_provider.stream_chat_response(
             question=question,
             context_chunks=context_chunks,
             conversation_state=conversation_state,

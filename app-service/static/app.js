@@ -107,7 +107,9 @@ const sampleGroups = [
   },
 ];
 
-const recommendedQuestions = sampleGroups.flatMap((group) => group.questions).filter((question) => !question.toLowerCase().startsWith("no útil"));
+const recommendedQuestions = sampleGroups
+  .flatMap((group) => group.questions)
+  .filter((question) => !question.toLowerCase().startsWith("no útil"));
 
 const state = {
   apiBase: "",
@@ -184,10 +186,16 @@ function appendMessage(role, text, kind = role) {
   meta.textContent = role === "user" ? "Usuario" : role === "error" ? "Error" : "Asistente";
 
   const body = document.createElement("span");
+  body.className = "message-body";
   body.textContent = text;
 
   item.append(meta, body);
   elements.messages.append(item);
+  scrollMessages();
+  return { item, body };
+}
+
+function scrollMessages() {
   elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
@@ -302,31 +310,131 @@ async function sendMessage(message) {
   state.busy = true;
   elements.sendButton.disabled = true;
   appendMessage("user", message);
+  const assistantMessage = appendMessage("assistant", "");
 
+  const payload = {
+    conversation_id: state.conversationId,
+    user_id: state.userId,
+    message,
+    channel: "web-demo",
+  };
+
+  let receivedUsefulStreamEvent = false;
   try {
-    const payload = {
-      conversation_id: state.conversationId,
-      user_id: state.userId,
-      message,
-      channel: "web-demo",
-    };
-    const response = await requestJson("/chat", {
-      method: "POST",
-      body: JSON.stringify(payload),
+    await requestStream("/chat/stream", payload, {
+      onToken(text) {
+        receivedUsefulStreamEvent = true;
+        assistantMessage.body.textContent += text;
+        scrollMessages();
+      },
+      onSources(data) {
+        renderSources(data.sources || [], data.related_incidents || []);
+      },
+      onFinal(response) {
+        receivedUsefulStreamEvent = true;
+        applyChatResponse(response, assistantMessage.body);
+      },
+      onError(data) {
+        throw new Error(data.message || "No se pudo completar el stream.");
+      },
     });
-
-    state.conversationId = response.conversation_id;
-    state.lastMessageId = response.message_id;
-    appendMessage("assistant", response.answer || response.fallback_text || "Respuesta vacía");
-    renderSources(response.sources, response.related_incidents);
-    elements.rawResponse.textContent = JSON.stringify(response, null, 2);
-    setFeedbackEnabled(Boolean(response.conversation_id));
   } catch (error) {
-    appendMessage("error", error.message, "error");
+    if (!receivedUsefulStreamEvent) {
+      try {
+        const response = await requestJson("/chat", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        applyChatResponse(response, assistantMessage.body);
+      } catch (fallbackError) {
+        assistantMessage.item.remove();
+        appendMessage("error", fallbackError.message, "error");
+      }
+    } else {
+      appendMessage("error", error.message, "error");
+    }
   } finally {
     state.busy = false;
     elements.sendButton.disabled = false;
     elements.messageInput.focus();
+  }
+}
+
+function applyChatResponse(response, bodyElement) {
+  state.conversationId = response.conversation_id;
+  state.lastMessageId = response.message_id;
+  bodyElement.textContent = response.answer || response.fallback_text || "Respuesta vacía";
+  renderSources(response.sources, response.related_incidents);
+  elements.rawResponse.textContent = JSON.stringify(response, null, 2);
+  setFeedbackEnabled(Boolean(response.conversation_id));
+  scrollMessages();
+}
+
+async function requestStream(path, payload, handlers) {
+  persistConnection();
+  const response = await fetch(`${state.apiBase}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok || !response.body) {
+    const text = await response.text();
+    throw new Error(text || `${response.status} ${response.statusText}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\n\n/);
+    buffer = events.pop() || "";
+    for (const rawEvent of events) {
+      dispatchSseEvent(rawEvent, handlers);
+    }
+  }
+  if (buffer.trim()) {
+    dispatchSseEvent(buffer, handlers);
+  }
+}
+
+function dispatchSseEvent(rawEvent, handlers) {
+  const parsed = parseSseEvent(rawEvent);
+  if (!parsed) {
+    return;
+  }
+  if (parsed.event === "token") {
+    handlers.onToken?.(parsed.data.text || "");
+  } else if (parsed.event === "sources") {
+    handlers.onSources?.(parsed.data);
+  } else if (parsed.event === "final") {
+    handlers.onFinal?.(parsed.data);
+  } else if (parsed.event === "error") {
+    handlers.onError?.(parsed.data);
+  }
+}
+
+function parseSseEvent(rawEvent) {
+  let event = "message";
+  const dataLines = [];
+  for (const line of rawEvent.split(/\r?\n/)) {
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+  if (!dataLines.length) {
+    return null;
+  }
+  try {
+    return { event, data: JSON.parse(dataLines.join("\n")) };
+  } catch {
+    return { event, data: { raw: dataLines.join("\n") } };
   }
 }
 

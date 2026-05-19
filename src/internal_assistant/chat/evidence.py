@@ -404,17 +404,10 @@ def build_policy_clarification_answer(assessment: EvidenceAssessment, clarificat
     question = assessment.clarification_question or (
         "Necesito un dato mas para responder con seguridad. Indica sistema, proceso, error exacto o contexto operativo."
     )
-    return "\n".join(
-        [
-            "Resumen",
-            "No tengo evidencia directa suficiente para darte una solucion fiable.",
-            "",
-            "Detalle",
-            question,
-            "",
-            "Siguiente paso",
-            f"Responde con ese dato para continuar. Intento de aclaracion {clarification_attempts} de 2.",
-        ]
+    return (
+        "No tengo evidencia directa suficiente para darte una solucion fiable.\n\n"
+        f"{question}\n\n"
+        "Responde con ese dato para continuar."
     )
 
 

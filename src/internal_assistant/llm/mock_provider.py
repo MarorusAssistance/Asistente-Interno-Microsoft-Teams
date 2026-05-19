@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from hashlib import sha256
 
 from internal_assistant.config import get_settings
 from internal_assistant.llm.base import LLMProvider
+from internal_assistant.llm.streaming import ChatStreamEvent
 from internal_assistant.rag.filters import RetrievalFilters
 from internal_assistant.schemas.chat import AssistantDecision, ChatPlan
 
@@ -32,7 +34,7 @@ class MockLLMProvider(LLMProvider):
         conversation_memory = conversation_state.get("_conversation_memory") or []
         if conversation_memory and not context_chunks:
             top_memories = conversation_memory[:2]
-            answer = "Resumen basado en memoria conversacional:\n" + "\n".join(
+            answer = "Basandome en la memoria conversacional:\n" + "\n".join(
                 f"- {memory.get('memory_text', '')[:220]}" for memory in top_memories
             )
             return AssistantDecision(
@@ -53,7 +55,7 @@ class MockLLMProvider(LLMProvider):
             )
 
         top_chunks = context_chunks[:2]
-        answer = "Resumen basado en evidencia recuperada:\n" + "\n".join(
+        answer = "Segun la evidencia recuperada:\n" + "\n".join(
             f"- {chunk['content'][:220]}" for chunk in top_chunks
         )
         return AssistantDecision(
@@ -63,6 +65,24 @@ class MockLLMProvider(LLMProvider):
             should_offer_incident=False,
             used_chunk_ids=[chunk["chunk_id"] for chunk in top_chunks],
         )
+
+    def stream_chat_response(
+        self,
+        *,
+        question: str,
+        context_chunks: list[dict],
+        conversation_state: dict,
+    ) -> Iterator[ChatStreamEvent]:
+        decision = self.generate_chat_response(
+            question=question,
+            context_chunks=context_chunks,
+            conversation_state=conversation_state,
+        )
+        words = decision.answer.split(" ")
+        for index, word in enumerate(words):
+            suffix = " " if index < len(words) - 1 else ""
+            yield ChatStreamEvent(kind="token", text=f"{word}{suffix}")
+        yield ChatStreamEvent(kind="final", decision=decision)
 
     def plan_chat(self, *, message: str, recent_messages: list[dict], conversation_state: dict) -> ChatPlan:
         normalized = message.strip().lower()

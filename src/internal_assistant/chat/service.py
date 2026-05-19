@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+import re
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -107,6 +109,53 @@ class ChatService:
         )
         return decision, context_chunks
 
+    def stream_generate_answer(
+        self,
+        question: str,
+        retrieved_chunks: list,
+        conversation_state: dict,
+        *,
+        on_token: Callable[[str], None],
+        evidence_policy: dict[str, Any] | None = None,
+        planner_output: dict[str, Any] | None = None,
+        conversation_memory: list[dict[str, Any]] | None = None,
+        datasource_status: dict[str, Any] | None = None,
+    ) -> tuple[Any, list[dict[str, Any]]]:
+        context_chunks = [
+            {
+                "chunk_id": item.chunk_id,
+                "content": item.content,
+                "source_type": item.source_type,
+                "source_id": item.source_id,
+                "metadata": item.metadata,
+            }
+            for item in retrieved_chunks
+        ]
+        llm_state = dict(conversation_state)
+        if evidence_policy:
+            llm_state["_evidence_policy"] = evidence_policy
+        if planner_output:
+            llm_state["_planner_output"] = planner_output
+        if conversation_memory is not None:
+            llm_state["_conversation_memory"] = conversation_memory
+        if datasource_status:
+            llm_state["_datasource_status"] = datasource_status
+
+        final_decision = None
+        for event in self.llm_provider.stream_chat_response(
+            question=question,
+            context_chunks=context_chunks,
+            conversation_state=llm_state,
+        ):
+            if event.kind == "token" and event.text:
+                on_token(event.text)
+            elif event.kind == "final":
+                final_decision = event.decision
+
+        if final_decision is None:
+            raise RuntimeError("El proveedor LLM no devolvio decision final en streaming")
+        return final_decision, context_chunks
+
     def simulate_chat(
         self,
         request: ChatRequest,
@@ -148,7 +197,7 @@ class ChatService:
             trace_run.set_outputs(self._trace_response_payload(chat_response))
             return chat_response, next_state, meta
 
-    def handle_chat(self, request: ChatRequest) -> ChatResponse:
+    def handle_chat(self, request: ChatRequest, *, stream_token_callback: Callable[[str], None] | None = None) -> ChatResponse:
         started_at = time.perf_counter()
         trace = RagTrace.from_settings(self.settings)
         with trace.start_run(
@@ -248,6 +297,7 @@ class ChatService:
                 user_message.id,
                 started_at,
                 trace_run=trace_run,
+                stream_token_callback=stream_token_callback,
             )
             meta = response.get("_meta", {})
             with start_span("chat.persist", {"conversation_id": conversation.id, "intent": intent}):
@@ -311,10 +361,8 @@ class ChatService:
             self.feedback.create(payload)
             self.session.commit()
         answer = (
-            "Resumen\n"
             "Gracias. He registrado tu feedback para mejorar futuras respuestas.\n\n"
-            "Siguiente paso\n"
-            "Si quieres, puedes reformular la pregunta o pedirme otro caso parecido."
+            "Puedes reformular la pregunta o pedirme otro caso parecido si necesitas una respuesta mas precisa."
         )
         return ChatResponse(
             conversation_id=conversation_id,
@@ -412,6 +460,7 @@ class ChatService:
         write_retrieval_logs: bool = True,
         retrieval_config: RetrievalConfig | None = None,
         trace_run: Any | None = None,
+        stream_token_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         clarification_attempts = int(state.get("clarification_attempts", 0))
         effective_config = retrieval_config or DEFAULT_RETRIEVAL_CONFIG
@@ -697,11 +746,8 @@ class ChatService:
                 }
 
             full_answer = (
-                "Resumen\n"
                 "Necesito un poco mas de detalle para responder con seguridad.\n\n"
-                "Detalle\n"
-                f"Indica el sistema, el proceso o el error exacto. Intento de aclaracion {clarification_attempts} de 2.\n\n"
-                "Siguiente paso\n"
+                "Indica el sistema, el proceso o el error exacto.\n\n"
                 "Por ejemplo: 'RutaNexo no cierra una ruta aprobada' o 'SafeGate rechaza un acceso temporal'."
             )
             self._trace_formatted_response(
@@ -909,15 +955,27 @@ class ChatService:
                 "query_signals": query_signals.to_dict(),
                 "evidence_assessment": evidence_assessment.to_dict(),
             }
-            decision, context_chunks = self.generate_answer(
-                request.message,
-                retrieved,
-                state,
-                evidence_policy=evidence_policy,
-                planner_output=planner_payload,
-                conversation_memory=memory_payload if plan.needs_conversation_memory else None,
-                datasource_status=datasource_status,
-            )
+            if stream_token_callback:
+                decision, context_chunks = self.stream_generate_answer(
+                    request.message,
+                    retrieved,
+                    state,
+                    on_token=stream_token_callback,
+                    evidence_policy=evidence_policy,
+                    planner_output=planner_payload,
+                    conversation_memory=memory_payload if plan.needs_conversation_memory else None,
+                    datasource_status=datasource_status,
+                )
+            else:
+                decision, context_chunks = self.generate_answer(
+                    request.message,
+                    retrieved,
+                    state,
+                    evidence_policy=evidence_policy,
+                    planner_output=planner_payload,
+                    conversation_memory=memory_payload if plan.needs_conversation_memory else None,
+                    datasource_status=datasource_status,
+                )
             answer_run.set_outputs(
                 {
                     "decision": serialize_decision_for_langsmith(decision),
@@ -1175,39 +1233,28 @@ class ChatService:
         }
 
     def _format_answer_for_demo(self, answer: str, *, related_incidents: list[dict] | None = None) -> str:
-        cleaned_answer = answer.strip()
-        next_step = (
-            "Si quieres, puedo ampliar el procedimiento con mas detalle."
-            if not related_incidents
-            else "Si quieres, puedo ampliar el procedimiento o revisar las incidencias relacionadas."
-        )
-        lines = ["Resumen", cleaned_answer, "", "Siguiente paso", next_step]
-        return "\n".join(lines)
+        return self._strip_demo_headings(answer)
+
+    def _strip_demo_headings(self, answer: str) -> str:
+        cleaned = (answer or "").strip()
+        cleaned = re.sub(r"(?im)^\s*(resumen|detalle|siguiente paso)\s*:?\s*$\n?", "", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
 
     def _build_llm_clarification_answer(self, decision: Any, clarification_attempts: int) -> str:
         question = (getattr(decision, "clarification_question", None) or "").strip()
         if not question:
             question = "Necesito un dato mas para responder con seguridad. Indica sistema, proceso, error exacto o contexto operativo."
-        return "\n".join(
-            [
-                "Resumen",
-                "Necesito aclarar la consulta antes de darte una respuesta fiable.",
-                "",
-                "Detalle",
-                question,
-                "",
-                "Siguiente paso",
-                f"Responde con ese dato para continuar. Intento de aclaracion {clarification_attempts} de 2.",
-            ]
+        return (
+            "Necesito aclarar la consulta antes de darte una respuesta fiable.\n\n"
+            f"{question}\n\n"
+            "Responde con ese dato para continuar."
         )
 
     def _build_incident_offer_answer(self) -> str:
         return (
-            "Resumen\n"
             "No tengo evidencia suficiente en el indice para responder con seguridad.\n\n"
-            "Detalle\n"
-            "Con la informacion recuperada no puedo darte un procedimiento fiable sin inventar pasos.\n\n"
-            "Siguiente paso\n"
+            "Con la informacion recuperada no puedo darte un procedimiento fiable sin inventar pasos. "
             "Si quieres, puedo ayudarte a registrar una incidencia no resuelta para dejar trazabilidad."
         )
 
@@ -1223,17 +1270,10 @@ class ChatService:
                 "Necesito un dato mas antes de buscar: sistema, proceso, objetivo o error exacto. "
                 "Asi evito darte una respuesta basada en una suposicion."
             )
-        return "\n".join(
-            [
-                "Resumen",
-                "Necesito aclarar la consulta antes de buscar informacion.",
-                "",
-                "Detalle",
-                detail,
-                "",
-                "Siguiente paso",
-                f"Indica sistema, proceso o contexto operativo. Intento de aclaracion {clarification_attempts} de 2.",
-            ]
+        return (
+            "Necesito aclarar la consulta antes de buscar informacion.\n\n"
+            f"{detail}\n\n"
+            "Indica sistema, proceso o contexto operativo."
         )
 
     def _recent_messages_for_planner(self, conversation_id: int, *, exclude_message_id: int, limit: int = 6) -> list[dict[str, Any]]:
@@ -1490,17 +1530,14 @@ class ChatService:
 
     def _format_incident_created_answer(self, created: dict[str, Any]) -> str:
         lines = [
-            "Resumen",
             f"Incidencia registrada e indexada correctamente: {created['external_id']}.",
             "",
-            "Detalle",
             (
                 f"Titulo: {created.get('title', 'Sin titulo')} | "
                 f"Sistema: {created.get('affected_system', 'N/D')} | "
                 f"Estado: {created.get('status', 'N/D')}"
             ),
             "",
-            "Siguiente paso",
             "Ya puedes usar este ticket como referencia en futuras consultas o seguir completando contexto operativo.",
         ]
         return "\n".join(lines)

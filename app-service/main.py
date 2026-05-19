@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+from queue import Queue
 import sys
+from threading import Thread
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -9,7 +12,7 @@ from botbuilder.core import ActivityHandler, BotFrameworkAdapter, BotFrameworkAd
 from botbuilder.schema import Activity, ActivityTypes
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -161,6 +164,62 @@ def chat(payload: ChatRequest, session: DbSession) -> ChatResponse:
             },
         )
         return response
+
+
+def _sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/api/chat/stream")
+def chat_stream(payload: ChatRequest) -> StreamingResponse:
+    def events():
+        event_queue: Queue[tuple[str, dict] | None] = Queue()
+
+        def push_token(text: str) -> None:
+            event_queue.put(("token", {"text": text}))
+
+        def worker() -> None:
+            try:
+                with session_scope() as session:
+                    service = ChatService(session)
+                    response = service.handle_chat(payload, stream_token_callback=push_token)
+                response_payload = response.model_dump()
+                event_queue.put(
+                    (
+                        "sources",
+                        {
+                            "sources": [source.model_dump() for source in response.sources],
+                            "related_incidents": response.related_incidents,
+                        },
+                    )
+                )
+                event_queue.put(("final", response_payload))
+            except Exception as exc:
+                logger.exception("Streaming chat failed: %s", exc)
+                event_queue.put(
+                    (
+                        "error",
+                        {
+                            "message": "No se pudo completar la respuesta en streaming. Prueba de nuevo o usa /api/chat.",
+                        },
+                    )
+                )
+            finally:
+                event_queue.put(None)
+
+        Thread(target=worker, daemon=True).start()
+        while True:
+            item = event_queue.get()
+            if item is None:
+                break
+            event_name, event_payload = item
+            yield _sse_event(event_name, event_payload)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/messages")

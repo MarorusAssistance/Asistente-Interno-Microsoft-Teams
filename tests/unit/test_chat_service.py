@@ -238,9 +238,56 @@ def test_chat_response_with_sources_uses_retrieved_chunks(monkeypatch):
     response = service.handle_chat(ChatRequest(user_id="u1", message="Como solicito acceso temporal?"))
 
     assert response.sources
-    assert response.answer.startswith("Resumen")
+    assert response.answer.startswith("Segun la evidencia recuperada")
+    assert "Siguiente paso" not in response.answer
     assert "Fuentes consultadas" in response.fallback_text
     assert service.retrieval_logs.items[-1]["was_answered"] is True
+
+
+def test_chat_stream_callback_receives_answer_tokens(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    provider = StaticDecisionProvider(
+        AssistantDecision(
+            answer="Respuesta natural en streaming.",
+            needs_clarification=False,
+            used_chunk_ids=[1],
+        )
+    )
+    service = build_service(
+        [
+            retrieved_chunk(
+                chunk_id=1,
+                source_type="document",
+                source_id=100,
+                content="Procedimiento SafeGate.",
+                system="SafeGate",
+            )
+        ],
+        llm_provider=provider,
+    )
+    tokens = []
+
+    response = service.handle_chat(
+        ChatRequest(user_id="u1", message="Como solicito acceso temporal en SafeGate?"),
+        stream_token_callback=tokens.append,
+    )
+
+    assert response.answer == "Respuesta natural en streaming."
+    assert "".join(tokens) == "Respuesta natural en streaming."
+
+
+def test_chat_stream_callback_not_called_for_pre_gate_clarification(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.58, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    service = build_service([])
+    tokens = []
+
+    response = service.handle_chat(
+        ChatRequest(user_id="u1", message="No puedo entrar"),
+        stream_token_callback=tokens.append,
+    )
+
+    assert response.needs_clarification is True
+    assert tokens == []
 
 
 def test_llm_clarification_decision_returns_question_not_solution(monkeypatch):
@@ -865,7 +912,7 @@ def test_feedback_useful_and_not_useful_messages_are_stored(monkeypatch):
     useful = service.handle_chat(ChatRequest(user_id="u1", message="util gracias"))
     not_useful = service.handle_chat(ChatRequest(conversation_id=useful.conversation_id, user_id="u1", message="no util no me ayudo"))
 
-    assert useful.answer.startswith("Resumen")
+    assert useful.answer.startswith("Gracias")
     assert len(service.feedback.items) == 2
 
 
