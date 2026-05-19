@@ -1,3 +1,21 @@
+const starterActions = [
+  {
+    title: "Consultar procedimiento",
+    detail: "Documentación operativa con fuentes",
+    question: "Cómo cierro una expedición pendiente en AlmaTrack WMS?",
+  },
+  {
+    title: "Revisar incidencia conocida",
+    detail: "Caso resuelto o abierto",
+    question: "Cómo se resolvió la ruta congelada tras parada prioritaria en RutaNexo TMS?",
+  },
+  {
+    title: "Registrar caso no resuelto",
+    detail: "Aclaración y trazabilidad",
+    question: "No encuentro solución para un error nuevo en AlmaTrack WMS.",
+  },
+];
+
 const systems = [
   {
     name: "LogiCore ERP",
@@ -111,6 +129,8 @@ const recommendedQuestions = sampleGroups
   .flatMap((group) => group.questions)
   .filter((question) => !question.toLowerCase().startsWith("no útil"));
 
+const pendingStatuses = ["Preparando contexto...", "Consultando conocimiento interno...", "Generando respuesta..."];
+
 const state = {
   apiBase: "",
   userId: "",
@@ -118,6 +138,7 @@ const state = {
   lastMessageId: null,
   busy: false,
   recommendationIndex: 0,
+  statusTimer: null,
 };
 
 const elements = {
@@ -128,10 +149,12 @@ const elements = {
   healthButton: document.querySelector("#healthButton"),
   healthStatus: document.querySelector("#healthStatus"),
   deepStatus: document.querySelector("#deepStatus"),
+  assistantState: document.querySelector("#assistantState"),
   messages: document.querySelector("#messages"),
   chatForm: document.querySelector("#chatForm"),
   messageInput: document.querySelector("#messageInput"),
   sendButton: document.querySelector("#sendButton"),
+  starterActions: document.querySelector("#starterActions"),
   systems: document.querySelector("#systems"),
   samples: document.querySelector("#samples"),
   surpriseButton: document.querySelector("#surpriseButton"),
@@ -177,22 +200,56 @@ function setPill(element, text, kind) {
   element.className = `pill ${kind}`;
 }
 
+function setAssistantState(text, kind = "idle") {
+  elements.assistantState.className = `chat-status ${kind}`;
+  elements.assistantState.innerHTML = `<span class="status-dot"></span>${text}`;
+}
+
+function startPendingStatus() {
+  clearPendingStatus();
+  let index = 0;
+  setAssistantState(pendingStatuses[index], "busy");
+  state.statusTimer = window.setInterval(() => {
+    index = Math.min(index + 1, pendingStatuses.length - 1);
+    setAssistantState(pendingStatuses[index], "busy");
+  }, 1300);
+}
+
+function clearPendingStatus(finalText = "Listo para consultar conocimiento interno.") {
+  if (state.statusTimer) {
+    window.clearInterval(state.statusTimer);
+    state.statusTimer = null;
+  }
+  setAssistantState(finalText, "idle");
+}
+
 function appendMessage(role, text, kind = role) {
   const item = document.createElement("article");
   item.className = `message ${kind}`;
 
+  const avatar = document.createElement("span");
+  avatar.className = "message-avatar";
+  avatar.textContent = role === "user" ? "TU" : role === "error" ? "!" : "LA";
+
+  const content = document.createElement("div");
+  content.className = "message-content";
+
   const meta = document.createElement("span");
-  meta.className = "message-meta";
-  meta.textContent = role === "user" ? "Usuario" : role === "error" ? "Error" : "Asistente";
+  meta.className = "message-label";
+  meta.textContent = role === "user" ? "Usuario" : role === "error" ? "Error" : "LogiAssist";
 
   const body = document.createElement("span");
   body.className = "message-body";
   body.textContent = text;
 
-  item.append(meta, body);
+  const inlineSources = document.createElement("div");
+  inlineSources.className = "inline-sources";
+
+  content.append(meta, body, inlineSources);
+  item.append(avatar, content);
   elements.messages.append(item);
   scrollMessages();
-  return { item, body };
+  return { item, body, inlineSources };
 }
 
 function scrollMessages() {
@@ -212,40 +269,68 @@ function fillComposer(question) {
   elements.messageInput.focus();
 }
 
+function sourceKind(source) {
+  return source.source_type === "document" ? "Documento" : "Incidencia";
+}
+
+function createSourceCard(source, compact = false) {
+  const item = document.createElement("div");
+  item.className = compact ? "source-chip-card" : "source-item";
+
+  const title = document.createElement("span");
+  title.className = "source-title";
+  title.textContent = source.title || `${source.source_type}:${source.source_id}`;
+
+  const meta = document.createElement("span");
+  meta.className = "source-meta";
+  meta.textContent = `${sourceKind(source)} ${source.source_id} · chunk ${source.chunk_id}`;
+
+  const excerpt = document.createElement("span");
+  excerpt.className = "source-excerpt";
+  excerpt.textContent = truncate(source.source_url || source.excerpt, compact ? 120 : 230);
+
+  item.append(title, meta, excerpt);
+  return item;
+}
+
+function renderInlineSources(container, sources = [], relatedIncidents = []) {
+  container.innerHTML = "";
+  if (!sources.length && !relatedIncidents.length) {
+    const empty = document.createElement("p");
+    empty.className = "inline-source-empty";
+    empty.textContent = "Esta respuesta no incluye fuentes porque es una aclaración o un flujo de registro.";
+    container.append(empty);
+    return;
+  }
+
+  const title = document.createElement("span");
+  title.className = "inline-source-title";
+  title.textContent = "Fuentes usadas";
+  container.append(title);
+
+  for (const source of sources.slice(0, 3)) {
+    container.append(createSourceCard(source, true));
+  }
+}
+
 function renderSources(sources = [], relatedIncidents = []) {
   elements.sourceCount.textContent = String(sources.length);
   elements.sources.innerHTML = "";
 
   if (!sources.length && !relatedIncidents.length) {
     elements.sources.className = "source-list empty";
-    elements.sources.textContent = "Sin fuentes para esta respuesta. Puede ser una aclaración, una abstención o un flujo de registro.";
+    elements.sources.textContent = "Esta respuesta no incluye fuentes porque es una aclaración o un flujo de registro.";
     return;
   }
 
   elements.sources.className = "source-list";
   for (const source of sources) {
-    const item = document.createElement("div");
-    item.className = "source-item";
-
-    const title = document.createElement("span");
-    title.className = "source-title";
-    title.textContent = source.title || `${source.source_type}:${source.source_id}`;
-
-    const meta = document.createElement("span");
-    meta.className = "source-meta";
-    meta.textContent = `${source.source_type}:${source.source_id} · chunk ${source.chunk_id}`;
-
-    const excerpt = document.createElement("span");
-    excerpt.className = "source-excerpt";
-    excerpt.textContent = truncate(source.source_url || source.excerpt);
-
-    item.append(title, meta, excerpt);
-    elements.sources.append(item);
+    elements.sources.append(createSourceCard(source));
   }
 
   for (const incident of relatedIncidents.slice(0, 3)) {
     const item = document.createElement("div");
-    item.className = "source-item";
+    item.className = "source-item related";
     const title = document.createElement("span");
     title.className = "source-title";
     title.textContent = incident.external_id || `incident:${incident.id}`;
@@ -311,6 +396,8 @@ async function sendMessage(message) {
   elements.sendButton.disabled = true;
   appendMessage("user", message);
   const assistantMessage = appendMessage("assistant", "");
+  assistantMessage.item.classList.add("streaming");
+  startPendingStatus();
 
   const payload = {
     conversation_id: state.conversationId,
@@ -324,6 +411,9 @@ async function sendMessage(message) {
     await requestStream("/chat/stream", payload, {
       onToken(text) {
         receivedUsefulStreamEvent = true;
+        if (assistantMessage.body.textContent === "") {
+          setAssistantState("Generando respuesta...", "busy");
+        }
         assistantMessage.body.textContent += text;
         scrollMessages();
       },
@@ -332,7 +422,7 @@ async function sendMessage(message) {
       },
       onFinal(response) {
         receivedUsefulStreamEvent = true;
-        applyChatResponse(response, assistantMessage.body);
+        applyChatResponse(response, assistantMessage);
       },
       onError(data) {
         throw new Error(data.message || "No se pudo completar el stream.");
@@ -345,13 +435,15 @@ async function sendMessage(message) {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        applyChatResponse(response, assistantMessage.body);
+        applyChatResponse(response, assistantMessage);
       } catch (fallbackError) {
         assistantMessage.item.remove();
         appendMessage("error", fallbackError.message, "error");
+        clearPendingStatus("Error al procesar la consulta.");
       }
     } else {
       appendMessage("error", error.message, "error");
+      clearPendingStatus("El stream se interrumpió antes de completar la respuesta.");
     }
   } finally {
     state.busy = false;
@@ -360,13 +452,16 @@ async function sendMessage(message) {
   }
 }
 
-function applyChatResponse(response, bodyElement) {
+function applyChatResponse(response, messageParts) {
   state.conversationId = response.conversation_id;
   state.lastMessageId = response.message_id;
-  bodyElement.textContent = response.answer || response.fallback_text || "Respuesta vacía";
+  messageParts.item.classList.remove("streaming");
+  messageParts.body.textContent = response.answer || response.fallback_text || "Respuesta vacía";
+  renderInlineSources(messageParts.inlineSources, response.sources || [], response.related_incidents || []);
   renderSources(response.sources, response.related_incidents);
   elements.rawResponse.textContent = JSON.stringify(response, null, 2);
   setFeedbackEnabled(Boolean(response.conversation_id));
+  clearPendingStatus("Respuesta completada.");
   scrollMessages();
 }
 
@@ -473,14 +568,36 @@ function resetConversation() {
   elements.rawResponse.textContent = "{}";
   renderSources([], []);
   setFeedbackEnabled(false);
+  clearPendingStatus();
   appendMessage(
     "assistant",
     [
       "Nueva conversación iniciada.",
       "Puedo ayudarte con almacén, pedidos, rutas, accesos, onboarding, calidad, documentos y KPIs.",
-      "Prueba con una pregunta del panel lateral, por ejemplo: “Cómo cierro una expedición pendiente en AlmaTrack WMS?”, “Cómo se resolvió la ruta congelada en RutaNexo TMS?” o “No puedo cerrar la operación, qué debo revisar?”.",
+      "Elige una tarjeta del panel de demo o escribe una consulta operativa. Si faltan datos, pediré una aclaración antes de inventar una respuesta.",
     ].join("\n\n")
   );
+}
+
+function renderStarterActions() {
+  elements.starterActions.innerHTML = "";
+  for (const action of starterActions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "starter-card";
+    button.addEventListener("click", () => fillComposer(action.question));
+
+    const title = document.createElement("span");
+    title.className = "starter-title";
+    title.textContent = action.title;
+
+    const detail = document.createElement("span");
+    detail.className = "starter-detail";
+    detail.textContent = action.detail;
+
+    button.append(title, detail);
+    elements.starterActions.append(button);
+  }
 }
 
 function renderSystems() {
@@ -499,11 +616,7 @@ function renderSystems() {
     area.className = "system-area";
     area.textContent = system.area;
 
-    const example = document.createElement("span");
-    example.className = "system-example";
-    example.textContent = `Ejemplo: ${system.example}`;
-
-    item.append(name, area, example);
+    item.append(name, area);
     elements.systems.append(item);
   }
 }
@@ -511,23 +624,27 @@ function renderSystems() {
 function renderSamples() {
   elements.samples.innerHTML = "";
   for (const group of sampleGroups) {
-    const section = document.createElement("div");
+    const section = document.createElement("details");
     section.className = "sample-group";
+    section.open = group.title === "Documentación operativa" || group.title === "Incidencias conocidas";
 
-    const title = document.createElement("h3");
-    title.textContent = group.title;
+    const summary = document.createElement("summary");
+    summary.textContent = group.title;
 
     const description = document.createElement("p");
     description.textContent = group.description;
 
-    section.append(title, description);
+    const list = document.createElement("div");
+    list.className = "sample-buttons";
     for (const sample of group.questions) {
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = sample;
       button.addEventListener("click", () => fillComposer(sample));
-      section.append(button);
+      list.append(button);
     }
+
+    section.append(summary, description, list);
     elements.samples.append(section);
   }
 }
@@ -564,6 +681,7 @@ elements.usefulButton.addEventListener("click", () => sendFeedback("useful"));
 elements.notUsefulButton.addEventListener("click", () => sendFeedback("not_useful"));
 
 loadState();
+renderStarterActions();
 renderSystems();
 renderSamples();
 resetConversation();
