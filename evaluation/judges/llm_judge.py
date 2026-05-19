@@ -19,8 +19,9 @@ class LLMJudge(BaseJudge):
         self.session = session
         self.llm_provider = llm_provider or build_default_provider()
         self.heuristic = HeuristicJudge(session)
-        self.client = getattr(self.llm_provider, "client", None)
-        self.model = getattr(getattr(self.llm_provider, "settings", None), "chat_model", None)
+        chat_provider = getattr(self.llm_provider, "chat_provider", self.llm_provider)
+        self.client = getattr(chat_provider, "client", None)
+        self.model = getattr(getattr(chat_provider, "settings", None), "chat_model", None)
         if self.client is None or self.model is None:
             raise ValueError("LLMJudge requiere un proveedor compatible con cliente OpenAI")
 

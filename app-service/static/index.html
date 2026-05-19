@@ -20,7 +20,7 @@
           </div>
         </header>
 
-        <section class="connection-panel" aria-label="Configuracion de API">
+        <section class="connection-panel" aria-label="Configuración de API">
           <label class="field wide">
             <span>API base</span>
             <input id="apiBaseInput" type="url" spellcheck="false" />
@@ -42,7 +42,7 @@
             <textarea
               id="messageInput"
               rows="3"
-              placeholder="Pregunta algo sobre operaciones, seguridad, onboarding o incidencias..."
+              placeholder="Elige una pregunta sugerida o escribe sobre operaciones, seguridad, onboarding o incidencias..."
               required
             ></textarea>
             <button id="sendButton" type="submit">Enviar</button>
@@ -53,8 +53,26 @@
       <aside class="side-panel">
         <section class="panel-section">
           <div class="section-title">
-            <h2>Preguntas de demo</h2>
-            <button id="resetButton" type="button" class="text-button">Nueva conversacion</button>
+            <h2>Guía rápida</h2>
+            <button id="surpriseButton" type="button" class="text-button">No sé qué preguntar</button>
+          </div>
+          <p class="hint">
+            Los sistemas son ficticios y representan una empresa logística demo. Usa las preguntas guiadas
+            para enseñar documentación, incidencias, aclaraciones y feedback.
+          </p>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">
+            <h2>Sistemas disponibles</h2>
+          </div>
+          <div id="systems" class="system-list"></div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">
+            <h2>Preguntas por escenario</h2>
+            <button id="resetButton" type="button" class="text-button">Nueva conversación</button>
           </div>
           <div id="samples" class="sample-list"></div>
         </section>
@@ -72,15 +90,15 @@
             <h2>Feedback</h2>
           </div>
           <div class="feedback-actions">
-            <button id="usefulButton" type="button" disabled>Util</button>
-            <button id="notUsefulButton" type="button" disabled>No util</button>
+            <button id="usefulButton" type="button" disabled>Útil</button>
+            <button id="notUsefulButton" type="button" disabled>No útil</button>
           </div>
           <p id="feedbackStatus" class="hint">Disponible tras recibir una respuesta.</p>
         </section>
 
         <section class="panel-section">
           <div class="section-title">
-            <h2>Ultima respuesta</h2>
+            <h2>Última respuesta</h2>
           </div>
           <pre id="rawResponse" class="raw-output">{}</pre>
         </section>

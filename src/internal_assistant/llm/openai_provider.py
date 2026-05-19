@@ -111,9 +111,33 @@ class OpenAIProvider(LLMProvider):
                     "planner.needs_knowledge_index": plan.needs_knowledge_index,
                     "planner.can_answer_from_conversation_only": plan.can_answer_from_conversation_only,
                     "planner.should_ask_clarification_first": plan.should_ask_clarification_first,
+                    "planner.retrieval_filters": plan.retrieval_filters.to_dict(),
                 },
             )
             return plan
+
+
+class SplitLLMProvider(LLMProvider):
+    def __init__(self, *, embeddings_provider: LLMProvider, chat_provider: LLMProvider) -> None:
+        self.embeddings_provider = embeddings_provider
+        self.chat_provider = chat_provider
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return self.embeddings_provider.embed_texts(texts)
+
+    def generate_chat_response(self, *, question: str, context_chunks: list[dict], conversation_state: dict) -> AssistantDecision:
+        return self.chat_provider.generate_chat_response(
+            question=question,
+            context_chunks=context_chunks,
+            conversation_state=conversation_state,
+        )
+
+    def plan_chat(self, *, message: str, recent_messages: list[dict], conversation_state: dict) -> ChatPlan:
+        return self.chat_provider.plan_chat(
+            message=message,
+            recent_messages=recent_messages,
+            conversation_state=conversation_state,
+        )
 
 
 def _is_placeholder(value: str) -> bool:
@@ -145,6 +169,21 @@ def resolve_provider_name(settings=None) -> str:
 def build_default_provider() -> LLMProvider:
     settings = get_settings()
     provider = resolve_provider_name(settings)
+    embeddings_provider = normalize_provider_name(settings.embeddings_provider or "")
+    if embeddings_provider in {"", "auto"}:
+        embeddings_provider = provider
+
+    if provider == "openai_compatible" and embeddings_provider == "openai":
+        return SplitLLMProvider(
+            embeddings_provider=OpenAIProvider(),
+            chat_provider=OpenAICompatibleProvider(),
+        )
+    if embeddings_provider != provider:
+        raise ValueError(
+            "EMBEDDINGS_PROVIDER debe coincidir con LLM_PROVIDER, usar auto, "
+            "o una combinacion soportada: LLM_PROVIDER=openai_compatible + EMBEDDINGS_PROVIDER=openai"
+        )
+
     if provider == "mock":
         return MockLLMProvider()
     if provider == "openai":

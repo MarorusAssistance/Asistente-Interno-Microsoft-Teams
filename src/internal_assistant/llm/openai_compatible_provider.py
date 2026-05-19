@@ -114,6 +114,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     "planner.needs_knowledge_index": plan.needs_knowledge_index,
                     "planner.can_answer_from_conversation_only": plan.can_answer_from_conversation_only,
                     "planner.should_ask_clarification_first": plan.should_ask_clarification_first,
+                    "planner.retrieval_filters": plan.retrieval_filters.to_dict(),
                 },
             )
             return plan

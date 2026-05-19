@@ -80,8 +80,11 @@ def evaluate_retrieval(
 ) -> dict[str, Any]:
     service = service_class(session, llm_provider=llm_provider)
     rows: list[dict[str, Any]] = []
+    turns = expand_questions(questions)
+    total_turns = len(turns)
 
-    for turn in expand_questions(questions):
+    for index, turn in enumerate(turns, start=1):
+        print(f"[eval][retrieval] {index}/{total_turns} {turn.turn_id}", flush=True)
         started_at = time.perf_counter()
         retrieved = service.retrieve(turn.message, retrieval_config=retrieval_config)
         latency_ms = int((time.perf_counter() - started_at) * 1000)

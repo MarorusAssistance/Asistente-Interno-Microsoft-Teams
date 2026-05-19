@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     app_env: str = Field(default="local", alias="APP_ENV")
     app_name: str = Field(default="internal-assistant-mvp", alias="APP_NAME")
     database_url: str = Field(
-        default="postgresql+psycopg://assistant:assistant@100.93.82.63:5432/assistant",
+        default="postgresql+psycopg://assistant:assistant@localhost:5432/assistant",
         alias="DATABASE_URL",
     )
     llm_provider: str = Field(default="auto", alias="LLM_PROVIDER")
@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     langsmith_endpoint: str = Field(default="https://api.smith.langchain.com", alias="LANGSMITH_ENDPOINT")
     allowed_origins: str = Field(default="", alias="ALLOWED_ORIGINS")
     bot_endpoint: str = Field(default="", alias="BOT_ENDPOINT")
-    custom_incidents_api_base_url: str = Field(default="http://100.93.82.63:7071", alias="CUSTOM_INCIDENTS_API_BASE_URL")
-    indexer_api_base_url: str = Field(default="http://100.93.82.63:7072", alias="INDEXER_API_BASE_URL")
+    custom_incidents_api_base_url: str = Field(default="http://localhost:7071", alias="CUSTOM_INCIDENTS_API_BASE_URL")
+    indexer_api_base_url: str = Field(default="http://localhost:7072", alias="INDEXER_API_BASE_URL")
     microsoft_app_id: str = Field(
         default="",
         validation_alias=AliasChoices("MICROSOFT_APP_ID", "BOT_APP_ID"),
@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     teams_app_id: str = Field(default="", alias="TEAMS_APP_ID")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     retrieval_confidence_threshold: float = Field(default=0.58, alias="RETRIEVAL_CONFIDENCE_THRESHOLD")
+    reranker_enabled: bool = Field(default=False, alias="RERANKER_ENABLED")
+    reranker_base_url: str = Field(default="http://127.0.0.1:8091", alias="RERANKER_BASE_URL")
+    reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3", alias="RERANKER_MODEL")
+    reranker_timeout_seconds: float = Field(default=30.0, alias="RERANKER_TIMEOUT_SECONDS")
+    reranker_candidates: int = Field(default=30, alias="RERANKER_CANDIDATES")
     eval_max_concurrency: int = Field(default=1, alias="EVAL_MAX_CONCURRENCY")
 
     @property

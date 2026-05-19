@@ -281,16 +281,65 @@ textarea {
   background: transparent;
 }
 
+.system-list,
 .sample-list {
   display: grid;
   gap: 0.5rem;
 }
 
+.system-card,
 .sample-list button {
   border-color: var(--line);
   color: var(--ink);
   background: #fffefa;
   text-align: left;
+}
+
+.system-card {
+  display: grid;
+  gap: 0.22rem;
+  width: 100%;
+}
+
+.system-name {
+  font-weight: 800;
+}
+
+.system-area,
+.system-example {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.32;
+}
+
+.system-example {
+  color: var(--blue);
+}
+
+.sample-group {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid rgba(23, 32, 27, 0.1);
+  border-radius: 7px;
+  padding: 0.65rem;
+  background: rgba(247, 244, 237, 0.55);
+}
+
+.sample-group h3 {
+  margin: 0;
+  font-family: var(--title-font);
+  font-size: 0.95rem;
+}
+
+.sample-group p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.83rem;
+  line-height: 1.35;
+}
+
+.sample-group button {
+  padding: 0.58rem 0.7rem;
 }
 
 .source-list {

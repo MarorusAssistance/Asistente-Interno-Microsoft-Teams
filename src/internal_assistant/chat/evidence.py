@@ -5,14 +5,20 @@ import unicodedata
 from typing import Any
 
 
-SYSTEM_NAMES = (
-    "LogiCore ERP",
-    "RutaNexo",
-    "AlmaTrack WMS",
-    "SafeGate",
-    "OnboardHub",
-    "DocuFlow",
-)
+SYSTEM_ALIASES = {
+    "LogiCore ERP": ("LogiCore ERP", "LogiCore"),
+    "AlmaTrack WMS": ("AlmaTrack WMS", "AlmaTrack"),
+    "RutaNexo TMS": ("RutaNexo TMS", "RutaNexo"),
+    "HelpOps": ("HelpOps",),
+    "DocuFlow": ("DocuFlow",),
+    "OnboardHub": ("OnboardHub",),
+    "SafeGate": ("SafeGate",),
+    "QualiTrace QMS": ("QualiTrace QMS", "QualiTrace"),
+    "ScanBridge IDP": ("ScanBridge IDP", "ScanBridge"),
+    "OpsLake": ("OpsLake",),
+}
+
+SYSTEM_NAMES = tuple(SYSTEM_ALIASES.keys())
 
 NEW_ISSUE_TERMS = (
     "error nuevo",
@@ -67,6 +73,10 @@ UNRESOLVED_CASE_TERMS = (
     "caso pendiente",
     "incidencia abierta",
     "incidencia pendiente",
+    "pendiente por",
+    "queda pendiente",
+    "esta pendiente",
+    "sigue pendiente",
     "sigue abierta",
     "sigue abierto",
     "sigue sin resolver",
@@ -82,6 +92,9 @@ STATUS_TERMS = (
     "sigue abierta",
     "sigue abierto",
     "estado",
+    "se conoce solucion",
+    "hay solucion",
+    "existe solucion",
     "solucion definitiva",
 )
 
@@ -151,9 +164,16 @@ class EvidenceAssessment:
 
 def detect_query_signals(message: str) -> QuerySignals:
     normalized = _normalize(message)
-    mentioned_systems = [system for system in SYSTEM_NAMES if _normalize(system) in normalized]
+    mentioned_systems = [
+        system
+        for system, aliases in SYSTEM_ALIASES.items()
+        if any(_normalize(alias) in normalized for alias in aliases)
+    ]
     status_request = any(term in normalized for term in (_normalize(item) for item in STATUS_TERMS)) and (
-        "resuelt" in normalized or "abiert" in normalized or "estado" in normalized
+        "resuelt" in normalized
+        or "abiert" in normalized
+        or "estado" in normalized
+        or "solucion" in normalized
     )
     return QuerySignals(
         new_issue=any(term in normalized for term in (_normalize(item) for item in NEW_ISSUE_TERMS)),
@@ -405,13 +425,26 @@ def _block(reason_code: str, clarification_question: str) -> tuple[bool, str, st
 def _matching_sources(retrieved: list, systems: list[str]) -> list:
     if not systems:
         return list(retrieved)
-    wanted = {_normalize(system) for system in systems}
-    return [item for item in retrieved if _normalize(_source_system(item)) in wanted]
+    wanted = {_canonical_system_key(system) for system in systems if _canonical_system_key(system)}
+    return [item for item in retrieved if _canonical_system_key(_source_system(item)) in wanted]
 
 
 def _source_system(item) -> str:
     metadata = getattr(item, "metadata", {}) or {}
     return str(metadata.get("affected_system") or "")
+
+
+def _canonical_system_key(value: str) -> str:
+    normalized_value = _normalize(value)
+    if not normalized_value:
+        return ""
+    for canonical, aliases in SYSTEM_ALIASES.items():
+        if normalized_value == _normalize(canonical):
+            return _system_key(canonical)
+        for alias in aliases:
+            if normalized_value == _normalize(alias):
+                return _system_key(canonical)
+    return _system_key(value)
 
 
 def _is_resolved_incident(item, related_incidents_by_id: dict[int, Any]) -> bool:
@@ -476,3 +509,7 @@ def _unique(values: list[str]) -> list[str]:
 def _normalize(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.strip().lower())
     return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _system_key(value: str) -> str:
+    return "_".join(_normalize(value).split())

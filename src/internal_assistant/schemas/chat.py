@@ -4,6 +4,8 @@ import re
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from internal_assistant.rag.filters import RetrievalFilters, normalize_retrieval_filters
+
 
 class SourceSnippet(BaseModel):
     source_type: str
@@ -52,12 +54,28 @@ class ChatPlan(BaseModel):
     user_context_summary: str = ""
     expected_source_preference: list[str] = Field(default_factory=list)
     mentioned_systems: list[str] = Field(default_factory=list)
+    retrieval_filters: RetrievalFilters = Field(default_factory=RetrievalFilters)
+    filter_reason: str = ""
     reason: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def recover_misplaced_filters(cls, data):
+        if not isinstance(data, dict):
+            return data
+        expected = data.get("expected_source_preference")
+        if isinstance(expected, dict):
+            data = dict(data)
+            if not data.get("retrieval_filters"):
+                data["retrieval_filters"] = expected
+            data["expected_source_preference"] = expected.get("source_types") or []
+        return data
 
     @field_validator(
         "conversation_memory_query",
         "knowledge_index_query",
         "user_context_summary",
+        "filter_reason",
         "reason",
         mode="before",
     )
@@ -76,7 +94,29 @@ class ChatPlan(BaseModel):
             return []
         if isinstance(value, str):
             return [value] if value.strip() else []
+        if isinstance(value, dict):
+            source_types = value.get("source_types")
+            if isinstance(source_types, list):
+                return [str(item).strip() for item in source_types if str(item).strip()]
+            return []
+        if isinstance(value, list):
+            normalized: list[str] = []
+            for item in value:
+                if isinstance(item, dict):
+                    source_types = item.get("source_types")
+                    if isinstance(source_types, list):
+                        normalized.extend(str(source_type).strip() for source_type in source_types if str(source_type).strip())
+                    continue
+                item_text = str(item).strip()
+                if item_text:
+                    normalized.append(item_text)
+            return normalized
         return value
+
+    @field_validator("retrieval_filters", mode="before")
+    @classmethod
+    def normalize_filters(cls, value):
+        return normalize_retrieval_filters(value)
 
     @classmethod
     def fallback(cls, message: str) -> "ChatPlan":
@@ -91,6 +131,8 @@ class ChatPlan(BaseModel):
             user_context_summary="",
             expected_source_preference=[],
             mentioned_systems=[],
+            retrieval_filters=RetrievalFilters(),
+            filter_reason="",
             reason="fallback_safe_knowledge_search",
         )
 

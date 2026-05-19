@@ -74,7 +74,7 @@ python -m uv run uvicorn local_main:app --app-dir functions/indexer-function --h
 La forma mas comoda para demo es abrir:
 
 ```text
-http://100.93.82.63:8000/demo
+http://localhost:8000/demo
 ```
 
 La pantalla permite comprobar `health`, enviar preguntas a `/api/chat`, ver fuentes, enviar feedback y resetear la conversacion. No depende de Teams ni de Bot Framework.
@@ -82,7 +82,7 @@ La pantalla permite comprobar `health`, enviar preguntas a `/api/chat`, ver fuen
 Tambien puedes llamar la API directamente:
 
 ```bash
-curl -X POST http://100.93.82.63:8000/api/chat \
+curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "u-demo",
@@ -92,16 +92,41 @@ curl -X POST http://100.93.82.63:8000/api/chat \
 
 ## Endpoints utiles
 
-- `http://100.93.82.63:8000/api/health`
-- `http://100.93.82.63:8000/api/health/deep`
-- `http://100.93.82.63:8000/api/chat`
-- `http://100.93.82.63:8000/demo`
-- `http://100.93.82.63:7071/health`
-- `http://100.93.82.63:7072/health`
+- `http://localhost:8000/api/health`
+- `http://localhost:8000/api/health/deep`
+- `http://localhost:8000/api/chat`
+- `http://localhost:8000/demo`
+- `http://localhost:7071/health`
+- `http://localhost:7072/health`
+
+## Reranker local opcional
+
+Para reordenar candidatos con un BGE cross-encoder local:
+
+```bash
+python -m uv run --extra reranker python scripts/serve_reranker.py
+```
+
+Activalo en `.env`:
+
+```env
+RERANKER_ENABLED=true
+RERANKER_BASE_URL=http://127.0.0.1:8091
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+```
+
+Si vienes de una base ya creada, ejecuta migraciones y reconstruye chunks para poblar las columnas de metadata:
+
+```bash
+python -m uv run python scripts/init_db.py
+python -m uv run python scripts/rebuild_index.py
+```
 
 ## Problemas habituales
 
 - `No hay chunks en el indice`: vuelve a ejecutar `scripts/rebuild_index.py`
+- `column chunks.source_title does not exist`: ejecuta `scripts/init_db.py` y luego `scripts/rebuild_index.py`
+- `Reranker unavailable`: el backend sigue con ranking hibrido; revisa que `scripts/serve_reranker.py` este levantado
 - `different vector dimensions`: alinea `EMBEDDING_DIMENSIONS` con el modelo usado para indexar
 - `Request timed out` con provider local: revisa `LLM_BASE_URL`, timeout y tamano del modelo
 - `DATABASE_URL` invalido: confirma que PostgreSQL local acepta las credenciales del `.env`

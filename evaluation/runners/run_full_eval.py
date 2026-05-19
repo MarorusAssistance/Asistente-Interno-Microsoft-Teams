@@ -45,6 +45,7 @@ def run_full_eval(
 ) -> dict[str, Any]:
     effective_config = (retrieval_config or RetrievalConfig()).normalized()
 
+    print("[eval] fase 1/3: retrieval primary (embeddings + DB, no LM Studio)", flush=True)
     retrieval_report = run_retrieval_eval(
         dataset_path=dataset_path,
         output_dir=output_dir,
@@ -56,6 +57,9 @@ def run_full_eval(
         write_reports=False,
         service_class=service_class,
     )
+    print("[eval] fase 1/3 completada", flush=True)
+
+    print("[eval] fase 2/3: answer primary (chat + judge si esta activo)", flush=True)
     answer_report = run_answer_eval(
         dataset_path=dataset_path,
         output_dir=output_dir,
@@ -68,10 +72,12 @@ def run_full_eval(
         write_reports=False,
         service_class=service_class,
     )
+    print("[eval] fase 2/3 completada", flush=True)
 
     adversarial_report = None
     adversarial_metrics: dict[str, float] = {}
     if include_adversarial and adversarial_dataset_path:
+        print("[eval] fase 3/3: answer adversarial", flush=True)
         adversarial_report = run_answer_eval(
             dataset_path=adversarial_dataset_path,
             output_dir=output_dir,
@@ -85,6 +91,7 @@ def run_full_eval(
             service_class=service_class,
         )
         adversarial_metrics = _compute_adversarial_metrics(adversarial_report["per_question_results"])
+        print("[eval] fase 3/3 completada", flush=True)
 
     ablation_report = None
     if include_ablation:

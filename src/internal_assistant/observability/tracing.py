@@ -142,6 +142,8 @@ def serialize_chunks_for_langsmith(chunks: list[Any]) -> list[dict[str, Any]]:
                 "metadata": metadata,
                 "vector_score": getattr(item, "vector_score", 0.0),
                 "text_score": getattr(item, "text_score", 0.0),
+                "hybrid_score": getattr(item, "hybrid_score", 0.0),
+                "rerank_score": getattr(item, "rerank_score", 0.0),
                 "final_score": getattr(item, "final_score", 0.0),
                 "content": getattr(item, "content", ""),
             }

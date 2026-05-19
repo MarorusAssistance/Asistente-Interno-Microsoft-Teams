@@ -38,6 +38,8 @@ Devuelve solo JSON con estos campos:
 - user_context_summary
 - expected_source_preference
 - mentioned_systems
+- retrieval_filters
+- filter_reason
 - reason
 
 Reglas:
@@ -46,5 +48,16 @@ Reglas:
 - Si solo pregunta por algo dicho antes, usa can_answer_from_conversation_only.
 - Las queries deben ser abstracciones semanticas limpias, no concatenaciones literales.
 - Si falta un dato imprescindible antes de buscar, usa should_ask_clarification_first.
-- No inventes sistemas. Sistemas permitidos: LogiCore ERP, RutaNexo, AlmaTrack WMS, SafeGate, OnboardHub, DocuFlow.
+- No inventes sistemas. Sistemas permitidos: LogiCore ERP, AlmaTrack WMS, RutaNexo TMS, HelpOps, DocuFlow, OnboardHub, SafeGate, QualiTrace QMS, ScanBridge IDP, OpsLake.
+- Rellena retrieval_filters solo con valores evidentes en el mensaje o memoria reciente.
+- Valores permitidos:
+  - source_types: document, incident
+  - affected_systems: LogiCore ERP, AlmaTrack WMS, RutaNexo TMS, HelpOps, DocuFlow, OnboardHub, SafeGate, QualiTrace QMS, ScanBridge IDP, OpsLake
+  - departments: Operaciones, Seguridad, Onboarding, Politicas internas
+  - document_types: procedimiento, guía, política, checklist, guía de diagnóstico, guía de escalado, guía de onboarding, faq operativa, procedimiento de calidad, procedimiento de seguridad
+  - incident_statuses: open, resolved
+- Si el usuario pide pasos/procedimiento, prefiere source_types=["document"] y document_types=["procedimiento"] si aplica.
+- Si pregunta como se resolvio un caso, prefiere source_types=["incident"], incident_statuses=["resolved"], is_resolved=true.
+- Si pregunta por caso abierto/no resuelto, prefiere source_types=["incident"], incident_statuses=["open"], is_resolved=false.
+- Si el filtro no es obvio, dejalo vacio.
 """.strip()

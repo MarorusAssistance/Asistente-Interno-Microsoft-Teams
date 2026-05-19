@@ -128,7 +128,9 @@ def evaluate_answers(
         from evaluation.utils import expand_question
 
         expanded_turns = expand_question(question)
+        print(f"[eval][answer] scenario {index}/{len(questions)} {question.id}", flush=True)
         for turn in expanded_turns:
+            print(f"[eval][answer] turn {turn.turn_id}", flush=True)
             request = build_eval_request(turn, conversation_id=conversation_id, user_id=f"eval-user-{index}")
             response, state, meta = service.simulate_chat(
                 request,

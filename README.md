@@ -177,7 +177,7 @@ python -m uv run uvicorn main:app --app-dir app-service --host 0.0.0.0 --port 80
 Abre la consola web:
 
 ```text
-http://100.93.82.63:8000/demo
+http://localhost:8000/demo
 ```
 
 Desde esa pantalla puedes comprobar `health`, hacer preguntas, ver fuentes, enviar feedback y cambiar la `API base` si quieres apuntar a una Web App de Azure. Para probar cloud sin Teams, abre:
@@ -189,7 +189,7 @@ https://<webapp>.azurewebsites.net/demo
 Consulta de ejemplo:
 
 ```bash
-curl -X POST http://100.93.82.63:8000/api/chat \
+curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "u-demo",
@@ -251,6 +251,30 @@ LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 ```
 
 No hay una variable para ocultar contenido en LangSmith: si esta activo, recibe prompts, contexto recuperado y respuestas para poder diagnosticar calidad. App Insights no recibe ese contenido completo.
+
+## Reranker local opcional
+
+El retrieval puede usar un BGE cross-encoder local como segunda fase de ranking. Por defecto esta desactivado para no afectar Azure ni el flujo basico.
+
+```bash
+python -m uv run --extra reranker python scripts/serve_reranker.py
+```
+
+Config local:
+
+```env
+RERANKER_ENABLED=true
+RERANKER_BASE_URL=http://127.0.0.1:8091
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+RERANKER_CANDIDATES=30
+```
+
+Despues de aplicar la migracion de metadata de chunks, reconstruye el indice:
+
+```bash
+python -m uv run python scripts/init_db.py
+python -m uv run python scripts/rebuild_index.py
+```
 
 ## Como desplegarlo en Azure
 

@@ -4,6 +4,7 @@ from hashlib import sha256
 
 from internal_assistant.config import get_settings
 from internal_assistant.llm.base import LLMProvider
+from internal_assistant.rag.filters import RetrievalFilters
 from internal_assistant.schemas.chat import AssistantDecision, ChatPlan
 
 
@@ -100,6 +101,8 @@ class MockLLMProvider(LLMProvider):
                 user_context_summary="El usuario pide recuperar informacion de la conversacion.",
                 expected_source_preference=[],
                 mentioned_systems=[],
+                retrieval_filters=RetrievalFilters(),
+                filter_reason="",
                 reason="mock_recall_only",
             )
         if follow_up:
@@ -117,6 +120,40 @@ class MockLLMProvider(LLMProvider):
                 user_context_summary="El usuario reformula una respuesta anterior.",
                 expected_source_preference=["document"],
                 mentioned_systems=[],
+                retrieval_filters=RetrievalFilters(source_types=["document"], departments=["Onboarding", "Operaciones"]),
+                filter_reason="follow-up sobre onboarding/operaciones",
                 reason="mock_follow_up",
+            )
+        if any(phrase in normalized for phrase in ("como se resolvio", "cómo se resolvió", "que correccion", "qué corrección")):
+            return ChatPlan(
+                intent="question_answering",
+                needs_conversation_memory=False,
+                needs_knowledge_index=True,
+                can_answer_from_conversation_only=False,
+                should_ask_clarification_first=False,
+                conversation_memory_query="",
+                knowledge_index_query=message,
+                user_context_summary="El usuario pregunta por una incidencia resuelta.",
+                expected_source_preference=["incident"],
+                mentioned_systems=[],
+                retrieval_filters=RetrievalFilters(source_types=["incident"], incident_statuses=["resolved"], is_resolved=True),
+                filter_reason="peticion de caso resuelto",
+                reason="mock_resolved_case",
+            )
+        if any(phrase in normalized for phrase in ("pasos", "procedimiento", "como registro", "cómo registro", "como completar", "cómo completar")):
+            return ChatPlan(
+                intent="question_answering",
+                needs_conversation_memory=False,
+                needs_knowledge_index=True,
+                can_answer_from_conversation_only=False,
+                should_ask_clarification_first=False,
+                conversation_memory_query="",
+                knowledge_index_query=message,
+                user_context_summary="El usuario pide procedimiento documentado.",
+                expected_source_preference=["document"],
+                mentioned_systems=[],
+                retrieval_filters=RetrievalFilters(source_types=["document"], document_types=["procedimiento"]),
+                filter_reason="peticion de procedimiento",
+                reason="mock_procedure",
             )
         return ChatPlan.fallback(message)

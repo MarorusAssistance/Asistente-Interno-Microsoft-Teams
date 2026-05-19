@@ -1,12 +1,113 @@
-const samples = [
-  "Como se registra una entrega parcial en ventana critica en LogiCore ERP?",
-  "Como solicito acceso temporal a SafeGate para personal externo?",
-  "Que debo revisar si RutaNexo no deja cerrar una ruta?",
-  "Tengo un bloqueo de pedido intercentro en LogiCore ERP.",
-  "Soy nuevo en operaciones. Que pasos de onboarding debo completar?",
-  "No encuentro solucion para un error nuevo en AlmaTrack WMS.",
-  "No util, la respuesta no me sirve.",
+const systems = [
+  {
+    name: "LogiCore ERP",
+    area: "Pedidos, compras, stock, proveedores y facturación.",
+    example: "Cómo se libera un pedido retenido por validación manual en LogiCore ERP?",
+  },
+  {
+    name: "AlmaTrack WMS",
+    area: "Almacén, ubicaciones, picking, packing y movimientos de stock.",
+    example: "Cómo cierro una expedición pendiente en AlmaTrack WMS?",
+  },
+  {
+    name: "RutaNexo TMS",
+    area: "Transporte, rutas, transportistas, entregas y POD/CMR.",
+    example: "Qué reviso si RutaNexo TMS no publica una nueva secuencia válida?",
+  },
+  {
+    name: "HelpOps",
+    area: "Tickets internos, escalado y coordinación de soporte.",
+    example: "Cómo se escala una incidencia crítica en HelpOps?",
+  },
+  {
+    name: "DocuFlow",
+    area: "Procedimientos, políticas, versiones y fuentes internas.",
+    example: "Debe el asistente presentar un caso parecido como solución definitiva?",
+  },
+  {
+    name: "OnboardHub",
+    area: "Onboarding, formación y alta de personal operativo.",
+    example: "Qué pasos debe completar un coordinador nuevo en OnboardHub?",
+  },
+  {
+    name: "SafeGate",
+    area: "Accesos, seguridad física, permisos y credenciales temporales.",
+    example: "Cómo se gestiona un permiso temporal en SafeGate?",
+  },
+  {
+    name: "QualiTrace QMS",
+    area: "Calidad, auditorías, no conformidades y lotes bloqueados.",
+    example: "Cómo se trata una no conformidad en QualiTrace QMS sin dictamen final?",
+  },
+  {
+    name: "ScanBridge IDP",
+    area: "OCR, extracción documental y validación de documentos.",
+    example: "Qué hago si ScanBridge IDP marca un CMR como ilegible?",
+  },
+  {
+    name: "OpsLake",
+    area: "KPIs operativos, datos consolidados y cuadros de seguimiento.",
+    example: "Cómo se revisa una diferencia de KPI en OpsLake?",
+  },
 ];
+
+const sampleGroups = [
+  {
+    title: "Documentación operativa",
+    description: "Procedimientos de almacén, pedidos y transporte.",
+    questions: [
+      "Cómo cierro una expedición pendiente en AlmaTrack WMS?",
+      "Cómo se libera un pedido retenido por validación manual en LogiCore ERP?",
+      "Qué reviso si RutaNexo TMS no publica una nueva secuencia válida?",
+    ],
+  },
+  {
+    title: "Seguridad y accesos",
+    description: "Permisos temporales, credenciales y accesos físicos.",
+    questions: [
+      "Cómo se gestiona un permiso temporal en SafeGate?",
+      "Cuándo hay que revocar una credencial temporal en SafeGate?",
+    ],
+  },
+  {
+    title: "Onboarding",
+    description: "Primeros pasos de coordinadores y personal operativo.",
+    questions: [
+      "Qué pasos debe completar un coordinador nuevo en OnboardHub?",
+      "Soy nuevo en operaciones. Qué tareas de iniciación debo completar esta semana?",
+    ],
+  },
+  {
+    title: "Calidad, documentos y KPIs",
+    description: "Calidad, OCR, políticas internas y datos consolidados.",
+    questions: [
+      "Cómo se trata una no conformidad en QualiTrace QMS sin dictamen final?",
+      "Qué hago si ScanBridge IDP marca un CMR como ilegible?",
+      "Cómo se revisa una diferencia de KPI en OpsLake?",
+      "Debe el asistente presentar un caso parecido como solución definitiva?",
+    ],
+  },
+  {
+    title: "Incidencias conocidas",
+    description: "Casos resueltos, abiertos y errores nuevos sin evidencia directa.",
+    questions: [
+      "Cómo se resolvió la ruta congelada tras parada prioritaria en RutaNexo TMS?",
+      "Hay una ubicación RF inconsistente en AlmaTrack WMS, existe solución definitiva?",
+      "No encuentro solución para un error nuevo en AlmaTrack WMS.",
+    ],
+  },
+  {
+    title: "Flujo de demo",
+    description: "Aclaraciones, registro de incidencia y feedback.",
+    questions: [
+      "No puedo cerrar la operación, qué debo revisar?",
+      "El torno principal sigue rechazando el acceso y no aparece ningún caso parecido.",
+      "No útil, la respuesta no me sirve.",
+    ],
+  },
+];
+
+const recommendedQuestions = sampleGroups.flatMap((group) => group.questions).filter((question) => !question.toLowerCase().startsWith("no útil"));
 
 const state = {
   apiBase: "",
@@ -14,6 +115,7 @@ const state = {
   conversationId: null,
   lastMessageId: null,
   busy: false,
+  recommendationIndex: 0,
 };
 
 const elements = {
@@ -28,7 +130,9 @@ const elements = {
   chatForm: document.querySelector("#chatForm"),
   messageInput: document.querySelector("#messageInput"),
   sendButton: document.querySelector("#sendButton"),
+  systems: document.querySelector("#systems"),
   samples: document.querySelector("#samples"),
+  surpriseButton: document.querySelector("#surpriseButton"),
   resetButton: document.querySelector("#resetButton"),
   sources: document.querySelector("#sources"),
   sourceCount: document.querySelector("#sourceCount"),
@@ -95,13 +199,18 @@ function truncate(value, maxLength = 230) {
   return `${text.slice(0, maxLength - 1).trim()}...`;
 }
 
+function fillComposer(question) {
+  elements.messageInput.value = question;
+  elements.messageInput.focus();
+}
+
 function renderSources(sources = [], relatedIncidents = []) {
   elements.sourceCount.textContent = String(sources.length);
   elements.sources.innerHTML = "";
 
   if (!sources.length && !relatedIncidents.length) {
     elements.sources.className = "source-list empty";
-    elements.sources.textContent = "Sin fuentes para esta respuesta.";
+    elements.sources.textContent = "Sin fuentes para esta respuesta. Puede ser una aclaración, una abstención o un flujo de registro.";
     return;
   }
 
@@ -208,7 +317,7 @@ async function sendMessage(message) {
 
     state.conversationId = response.conversation_id;
     state.lastMessageId = response.message_id;
-    appendMessage("assistant", response.answer || response.fallback_text || "Respuesta vacia");
+    appendMessage("assistant", response.answer || response.fallback_text || "Respuesta vacía");
     renderSources(response.sources, response.related_incidents);
     elements.rawResponse.textContent = JSON.stringify(response, null, 2);
     setFeedbackEnabled(Boolean(response.conversation_id));
@@ -225,7 +334,7 @@ function setFeedbackEnabled(enabled) {
   elements.usefulButton.disabled = !enabled;
   elements.notUsefulButton.disabled = !enabled;
   elements.feedbackStatus.textContent = enabled
-    ? "Puedes marcar la ultima respuesta como util o no util."
+    ? "Puedes marcar la última respuesta como útil o no útil."
     : "Disponible tras recibir una respuesta.";
 }
 
@@ -258,22 +367,67 @@ function resetConversation() {
   setFeedbackEnabled(false);
   appendMessage(
     "assistant",
-    "Nueva conversacion iniciada. Puedes lanzar una pregunta de demo o escribir una incidencia nueva."
+    [
+      "Nueva conversación iniciada.",
+      "Puedo ayudarte con almacén, pedidos, rutas, accesos, onboarding, calidad, documentos y KPIs.",
+      "Prueba con una pregunta del panel lateral, por ejemplo: “Cómo cierro una expedición pendiente en AlmaTrack WMS?”, “Cómo se resolvió la ruta congelada en RutaNexo TMS?” o “No puedo cerrar la operación, qué debo revisar?”.",
+    ].join("\n\n")
   );
+}
+
+function renderSystems() {
+  elements.systems.innerHTML = "";
+  for (const system of systems) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "system-card";
+    item.addEventListener("click", () => fillComposer(system.example));
+
+    const name = document.createElement("span");
+    name.className = "system-name";
+    name.textContent = system.name;
+
+    const area = document.createElement("span");
+    area.className = "system-area";
+    area.textContent = system.area;
+
+    const example = document.createElement("span");
+    example.className = "system-example";
+    example.textContent = `Ejemplo: ${system.example}`;
+
+    item.append(name, area, example);
+    elements.systems.append(item);
+  }
 }
 
 function renderSamples() {
   elements.samples.innerHTML = "";
-  for (const sample of samples) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = sample;
-    button.addEventListener("click", () => {
-      elements.messageInput.value = sample;
-      elements.messageInput.focus();
-    });
-    elements.samples.append(button);
+  for (const group of sampleGroups) {
+    const section = document.createElement("div");
+    section.className = "sample-group";
+
+    const title = document.createElement("h3");
+    title.textContent = group.title;
+
+    const description = document.createElement("p");
+    description.textContent = group.description;
+
+    section.append(title, description);
+    for (const sample of group.questions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = sample;
+      button.addEventListener("click", () => fillComposer(sample));
+      section.append(button);
+    }
+    elements.samples.append(section);
   }
+}
+
+function suggestQuestion() {
+  const question = recommendedQuestions[state.recommendationIndex % recommendedQuestions.length];
+  state.recommendationIndex += 1;
+  fillComposer(question);
 }
 
 elements.chatForm.addEventListener("submit", (event) => {
@@ -296,11 +450,13 @@ elements.localButton.addEventListener("click", () => {
 });
 
 elements.healthButton.addEventListener("click", checkHealth);
+elements.surpriseButton.addEventListener("click", suggestQuestion);
 elements.resetButton.addEventListener("click", resetConversation);
 elements.usefulButton.addEventListener("click", () => sendFeedback("useful"));
 elements.notUsefulButton.addEventListener("click", () => sendFeedback("not_useful"));
 
 loadState();
+renderSystems();
 renderSamples();
 resetConversation();
 checkHealth();

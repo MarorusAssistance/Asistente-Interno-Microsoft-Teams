@@ -6,7 +6,7 @@ from internal_assistant.chat.service import ChatService
 from internal_assistant.llm.base import LLMProvider
 from internal_assistant.llm.mock_provider import MockLLMProvider
 from internal_assistant.repositories.memory import RetrievedMemory
-from internal_assistant.rag import DEFAULT_RETRIEVAL_CONFIG
+from internal_assistant.rag import DEFAULT_RETRIEVAL_CONFIG, RetrievalFilters
 from internal_assistant.rag.retrieval import RetrievedChunk
 from internal_assistant.schemas.chat import AssistantDecision
 from internal_assistant.schemas.chat import ChatPlan
@@ -97,13 +97,53 @@ def build_service(results=None, llm_provider=None):
     return service
 
 
+def test_visible_sources_are_deduplicated_by_source_and_keep_best_chunk():
+    service = build_service()
+    sources = service._build_visible_sources(
+        [
+            retrieved_chunk(
+                chunk_id=10,
+                source_type="incident",
+                source_id=4,
+                content="Primer chunk menos relevante",
+                system="LogiCore ERP",
+                title="Pedido retenido",
+                final_score=0.40,
+            ),
+            retrieved_chunk(
+                chunk_id=11,
+                source_type="incident",
+                source_id=4,
+                content="Segundo chunk mas relevante",
+                system="LogiCore ERP",
+                title="Pedido retenido",
+                final_score=0.90,
+            ),
+            retrieved_chunk(
+                chunk_id=12,
+                source_type="document",
+                source_id=1,
+                content="Documento relevante",
+                system="LogiCore ERP",
+                title="Registro de entregas parciales",
+                final_score=0.80,
+            ),
+        ]
+    )
+
+    assert [f"{source.source_type}:{source.source_id}" for source in sources] == ["incident:4", "document:1"]
+    assert sources[0].chunk_id == 11
+
+
 class CapturingRetriever:
     def __init__(self, results=None):
         self.results = results or []
         self.queries = []
+        self.filters = []
 
-    def search(self, query, query_embedding, limit=5, config=None):
+    def search(self, query, query_embedding, limit=5, config=None, filters=None):
         self.queries.append(query)
+        self.filters.append(filters)
         return self.results[:limit]
 
 
@@ -548,6 +588,8 @@ def test_planner_followup_uses_memory_and_abstract_index_query(monkeypatch):
         user_context_summary="Usuario nuevo en operaciones.",
         expected_source_preference=["document"],
         mentioned_systems=[],
+        retrieval_filters=RetrievalFilters(source_types=["document"], departments=["Onboarding"]),
+        filter_reason="follow-up onboarding",
         reason="follow_up",
     )
     provider = StaticDecisionProvider(
@@ -576,9 +618,12 @@ def test_planner_followup_uses_memory_and_abstract_index_query(monkeypatch):
 
     assert response.needs_clarification is False
     assert service.retriever.queries == [plan.knowledge_index_query]
+    assert service.retriever.filters[0].source_types == ["document"]
+    assert service.retriever.filters[0].departments == ["Onboarding"]
     assert service.memories.search_calls
     assert provider.last_conversation_state["_conversation_memory"]
     assert provider.last_conversation_state["_planner_output"]["knowledge_index_query"] == plan.knowledge_index_query
+    assert provider.last_conversation_state["_datasource_status"]["knowledge_index"]["retrieval_filters"]["source_types"] == ["document"]
 
 
 def test_planner_memory_only_skips_chunk_retrieval(monkeypatch):
@@ -637,6 +682,38 @@ def test_planner_index_only_skips_memory_search(monkeypatch):
     assert service.retriever.queries == [plan.knowledge_index_query]
     assert service.memories.search_calls == []
     assert "_conversation_memory" not in provider.last_conversation_state
+
+
+def test_planner_filters_are_passed_to_retriever_for_resolved_case(monkeypatch):
+    monkeypatch.setattr("internal_assistant.chat.service.get_settings", lambda: SimpleNamespace(retrieval_confidence_threshold=0.10, app_shared_secret="secret", custom_incidents_api_base_url="http://test", indexer_api_base_url="http://test"))
+    plan = ChatPlan(
+        needs_knowledge_index=True,
+        knowledge_index_query="visita tecnica SafeGate acceso temporal rechazado",
+        expected_source_preference=["incident"],
+        retrieval_filters=RetrievalFilters(source_types=["incident"], incident_statuses=["resolved"], is_resolved=True),
+        filter_reason="caso resuelto",
+    )
+    provider = StaticDecisionProvider(
+        AssistantDecision(answer="La incidencia fue resuelta con validacion manual.", needs_clarification=False, used_chunk_ids=[44]),
+        plan=plan,
+    )
+    result = retrieved_chunk(
+        chunk_id=44,
+        source_type="incident",
+        source_id=44,
+        content="Visita tecnica con acceso temporal rechazado en SafeGate resuelta.",
+        system="SafeGate",
+    )
+    service = build_service([result], llm_provider=provider)
+    service.retriever = CapturingRetriever([result])
+    service.incidents.items = [SimpleNamespace(id=44, external_id="INC-044", title="Visita tecnica", status="resolved", is_resolved=True)]
+
+    response = service.handle_chat(ChatRequest(user_id="u1", message="Como se resolvio la visita tecnica de SafeGate?"))
+
+    assert response.needs_clarification is False
+    assert service.retriever.filters[0].source_types == ["incident"]
+    assert service.retriever.filters[0].incident_statuses == ["resolved"]
+    assert service.retriever.filters[0].is_resolved is True
 
 
 def test_requested_empty_index_is_signaled_when_memory_exists(monkeypatch):
@@ -800,7 +877,7 @@ def test_handle_chat_uses_default_retrieval_config(monkeypatch):
         def __init__(self):
             self.config = None
 
-        def search(self, query, query_embedding, limit=5, config=None):
+        def search(self, query, query_embedding, limit=5, config=None, filters=None):
             self.config = config
             return [
                 RetrievedChunk(

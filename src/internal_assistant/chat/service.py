@@ -31,7 +31,7 @@ from internal_assistant.repositories import (
     MessageRepository,
     RetrievalLogRepository,
 )
-from internal_assistant.rag import DEFAULT_RETRIEVAL_CONFIG, HybridRetriever, RetrievalConfig
+from internal_assistant.rag import DEFAULT_RETRIEVAL_CONFIG, HybridRetriever, RetrievalConfig, RetrievalFilters
 from internal_assistant.schemas import ChatPlan, ChatRequest, ChatResponse, FeedbackCreate, SourceSnippet
 
 logger = get_logger(__name__)
@@ -57,9 +57,15 @@ class ChatService:
         self,
         message: str,
         retrieval_config: RetrievalConfig | None = None,
+        retrieval_filters: RetrievalFilters | dict | None = None,
     ) -> list:
         query_embedding = self.llm_provider.embed_texts([message])[0]
-        return self.retriever.search(message, query_embedding, config=retrieval_config or DEFAULT_RETRIEVAL_CONFIG)
+        return self.retriever.search(
+            message,
+            query_embedding,
+            config=retrieval_config or DEFAULT_RETRIEVAL_CONFIG,
+            filters=retrieval_filters,
+        )
 
     def calculate_confidence(self, retrieved: list) -> float:
         return retrieved[0].final_score if retrieved else 0.0
@@ -417,6 +423,7 @@ class ChatService:
             trace_run=trace_run,
         )
         planner_payload = plan.model_dump()
+        retrieval_filters = plan.retrieval_filters
         early_signals = detect_query_signals(request.message)
 
         if plan.should_ask_clarification_first and early_signals.policy_question:
@@ -547,6 +554,8 @@ class ChatService:
                         "vector_candidates": effective_config.vector_candidates,
                         "text_candidates": effective_config.text_candidates,
                     },
+                    "retrieval_filters": retrieval_filters.to_dict(),
+                    "filter_reason": plan.filter_reason,
                 },
             ) if trace_run else RagTrace().start_run("rag.retrieve") as retrieve_run, start_span(
                 "chat.retrieve",
@@ -556,9 +565,16 @@ class ChatService:
                     "retrieval.top_k": effective_config.top_k,
                     "retrieval.vector_weight": effective_config.vector_weight,
                     "retrieval.text_weight": effective_config.text_weight,
+                    "retrieval.filters.active": retrieval_filters.active(),
+                    "retrieval.filters.source_types": retrieval_filters.source_types,
+                    "retrieval.filters.systems": retrieval_filters.affected_systems,
                 },
             ) as retrieve_span:
-                retrieved = self.retrieve(knowledge_query, retrieval_config=effective_config)
+                retrieved = self.retrieve(
+                    knowledge_query,
+                    retrieval_config=effective_config,
+                    retrieval_filters=retrieval_filters,
+                )
                 confidence = self.calculate_confidence(retrieved)
                 retrieve_attrs = retrieval_span_attributes(retrieved=retrieved, confidence=confidence)
                 set_span_attributes(retrieve_span, retrieve_attrs)
@@ -567,6 +583,8 @@ class ChatService:
                         "confidence": confidence,
                         "retrieved_chunks": serialize_chunks_for_langsmith(retrieved),
                         "retrieved_count": len(retrieved),
+                        "retrieval_filters": retrieval_filters.to_dict(),
+                        "filter_reason": plan.filter_reason,
                     }
                 )
 
@@ -617,6 +635,8 @@ class ChatService:
                 "query": knowledge_query if plan.needs_knowledge_index else "",
                 "result_count": len(retrieved),
                 "confidence": confidence,
+                "retrieval_filters": retrieval_filters.to_dict(),
+                "filter_reason": plan.filter_reason,
             },
             "evidence": {
                 "mode": evidence_assessment.evidence_mode,
@@ -838,17 +858,7 @@ class ChatService:
                 "_state": state,
             }
 
-        sources = [
-            SourceSnippet(
-                source_type=item.source_type,
-                source_id=item.source_id,
-                title=item.metadata.get("title", f"{item.source_type}-{item.source_id}"),
-                source_url=item.metadata.get("source_url"),
-                excerpt=item.content[:260],
-                chunk_id=item.chunk_id,
-            )
-            for item in retrieved
-        ]
+        sources = self._build_visible_sources(retrieved)
         trace_context_chunks = [
             {
                 "chunk_id": item.chunk_id,
@@ -1517,6 +1527,27 @@ class ChatService:
         if len(detail) > 160:
             detail = detail[:157].rstrip() + "..."
         return f"- [{index}] {source_type} {source.source_id} - {title}: {detail}"
+
+    def _build_visible_sources(self, retrieved: list) -> list[SourceSnippet]:
+        best_by_source: dict[tuple[str, int], tuple[int, float, SourceSnippet]] = {}
+        for position, item in enumerate(retrieved):
+            key = (str(item.source_type), int(item.source_id))
+            metadata = item.metadata or {}
+            score = float(getattr(item, "final_score", 0.0) or 0.0)
+            source = SourceSnippet(
+                source_type=item.source_type,
+                source_id=item.source_id,
+                title=metadata.get("title", f"{item.source_type}-{item.source_id}"),
+                source_url=metadata.get("source_url"),
+                excerpt=item.content[:260],
+                chunk_id=item.chunk_id,
+            )
+            current = best_by_source.get(key)
+            if current is None or score > current[1]:
+                best_by_source[key] = (position, score, source)
+
+        ranked = sorted(best_by_source.values(), key=lambda value: (-value[1], value[0]))
+        return [source for _, _, source in ranked]
 
     def _write_retrieval_log(self, *, conversation_id: int, message_id: int, query: str, intent: str, answer: str, confidence: float, latency_ms: int) -> None:
         self.retrieval_logs.create(

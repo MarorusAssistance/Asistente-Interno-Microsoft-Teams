@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from internal_assistant.config import get_settings
-from internal_assistant.llm import MockLLMProvider, OpenAICompatibleProvider, OpenAIProvider
+from internal_assistant.llm import MockLLMProvider, OpenAIProvider, build_default_provider
 from internal_assistant.models import Document, Incident
 from internal_assistant.schemas import ChatRequest, ChatResponse
 
@@ -206,7 +206,9 @@ def select_provider(provider_name: str):
     if normalized == "openai":
         return OpenAIProvider()
     if normalized == "openai_compatible":
-        return OpenAICompatibleProvider()
+        # Use the same provider composition as runtime so split setups such as
+        # local chat + OpenAI embeddings evaluate against the indexed vector space.
+        return build_default_provider()
     raise ValueError(f"Proveedor de evaluación no soportado: {provider_name}")
 
 
