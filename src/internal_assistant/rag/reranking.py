@@ -45,10 +45,99 @@ class HttpRerankerProvider:
         return results
 
 
+class CohereAzureRerankerProvider:
+    def __init__(self, *, base_url: str, api_key: str, model: str, timeout_seconds: float) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model or "model"
+        self.timeout_seconds = timeout_seconds
+
+    @property
+    def endpoint_url(self) -> str:
+        if self.base_url.endswith("/rerank"):
+            return self.base_url
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/rerank"
+        return f"{self.base_url}/v1/rerank"
+
+    def rerank(self, *, query: str, documents: list[dict], top_n: int) -> list[RerankResult]:
+        chunk_ids: list[int] = []
+        cohere_documents: list[str] = []
+        for document in documents:
+            metadata = document.get("metadata") or {}
+            chunk_ids.append(int(document["id"]))
+            cohere_documents.append(
+                "\n".join(
+                    item
+                    for item in [
+                        f"title: {metadata.get('source_title') or metadata.get('title') or ''}",
+                        f"source_type: {metadata.get('source_type') or ''}",
+                        f"source_id: {metadata.get('source_id') or ''}",
+                        f"affected_system: {metadata.get('affected_system') or ''}",
+                        f"department: {metadata.get('department') or ''}",
+                        f"document_type: {metadata.get('document_type') or ''}",
+                        f"content: {document.get('text') or ''}",
+                    ]
+                    if item.split(": ", 1)[-1]
+                )
+            )
+
+        response = httpx.post(
+            self.endpoint_url,
+            json={
+                "model": self.model,
+                "query": query,
+                "documents": cohere_documents,
+                "top_n": top_n,
+            },
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=self.timeout_seconds,
+        )
+        if response.status_code in {401, 403}:
+            response = httpx.post(
+                self.endpoint_url,
+                json={
+                    "model": self.model,
+                    "query": query,
+                    "documents": cohere_documents,
+                    "top_n": top_n,
+                },
+                headers={
+                    "Authorization": self.api_key,
+                    "Content-Type": "application/json",
+                },
+                timeout=self.timeout_seconds,
+            )
+        response.raise_for_status()
+        payload = response.json()
+        results = []
+        for item in payload.get("results") or []:
+            index = int(item["index"])
+            if index < 0 or index >= len(chunk_ids):
+                continue
+            score = item.get("relevance_score", item.get("score", 0.0))
+            results.append(RerankResult(chunk_id=chunk_ids[index], score=float(score)))
+        return results
+
+
 def build_default_reranker() -> RerankerProvider | None:
     settings = get_settings()
     if not settings.reranker_enabled:
         return None
+    provider = settings.reranker_provider.strip().lower()
+    if provider in {"cohere_azure", "azure_cohere", "cohere"}:
+        if not settings.reranker_api_key:
+            logger.warning("RERANKER_PROVIDER=%s but RERANKER_API_KEY is empty; reranker disabled", provider)
+            return None
+        return CohereAzureRerankerProvider(
+            base_url=settings.reranker_base_url,
+            api_key=settings.reranker_api_key,
+            model=settings.reranker_model,
+            timeout_seconds=settings.reranker_timeout_seconds,
+        )
     return HttpRerankerProvider(
         base_url=settings.reranker_base_url,
         model=settings.reranker_model,

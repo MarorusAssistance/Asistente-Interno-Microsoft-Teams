@@ -156,6 +156,7 @@ load_bicep_outputs() {
   export AZURE_INDEXER_FUNCTION_HOSTNAME="$(deployment_output indexerFunctionHostname)"
   export AZURE_INCIDENTS_FUNCTION_NAME="$(deployment_output incidentsFunctionName)"
   export AZURE_INCIDENTS_FUNCTION_HOSTNAME="$(deployment_output incidentsFunctionHostname)"
+  export AZURE_FUNCTIONS_RESOURCE_GROUP="${AZURE_FUNCTIONS_RESOURCE_GROUP:-${AZURE_RESOURCE_GROUP}-functions}"
   export AZURE_POSTGRES_SERVER_NAME="$(deployment_output postgresServerName)"
   export AZURE_STORAGE_ACCOUNT_NAME="$(deployment_output storageAccountName)"
   export AZURE_BOT_RESOURCE_NAME="$(deployment_output botName)"

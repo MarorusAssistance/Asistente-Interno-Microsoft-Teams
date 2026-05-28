@@ -11,10 +11,12 @@ require_vars PROJECT_NAME ENVIRONMENT_NAME AZURE_LOCATION AZURE_RESOURCE_GROUP P
 
 ALLOWED_ORIGINS_JSON="$(csv_to_json_array "${ALLOWED_ORIGINS:-}")"
 ENABLE_APPLICATION_INSIGHTS="${ENABLE_APPLICATION_INSIGHTS:-true}"
+AZURE_FUNCTIONS_RESOURCE_GROUP="${AZURE_FUNCTIONS_RESOURCE_GROUP:-${AZURE_RESOURCE_GROUP}-functions}"
 DEPLOYMENT_NAME="${PROJECT_NAME}-${ENVIRONMENT_NAME}-infra"
 TEMPLATE_FILE="$(native_path "${ROOT_DIR}/infra/main.bicep")"
 
 az group create --name "${AZURE_RESOURCE_GROUP}" --location "${AZURE_LOCATION}" >/dev/null
+az group create --name "${AZURE_FUNCTIONS_RESOURCE_GROUP}" --location "${AZURE_LOCATION}" >/dev/null
 
 az deployment group create \
   --name "${DEPLOYMENT_NAME}" \
@@ -24,6 +26,7 @@ az deployment group create \
     projectName="${PROJECT_NAME}" \
     environmentName="${ENVIRONMENT_NAME}" \
     location="${AZURE_LOCATION}" \
+    functionsResourceGroupName="${AZURE_FUNCTIONS_RESOURCE_GROUP}" \
     postgresAdminUser="${POSTGRES_ADMIN_USER}" \
     postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}" \
     postgresDatabaseName="${POSTGRES_DATABASE_NAME}" \

@@ -44,7 +44,7 @@ az postgres flexible-server stop --resource-group <rg> --name <server>
 - App Service Plan `B1`
 - PostgreSQL `Standard_B1ms`
 - Storage `Standard_LRS`
-- Functions en Consumption
+- Functions en Consumption `Y1 Dynamic`, preferiblemente en un Resource Group separado si el RG principal ya contiene App Service Linux
 
 ## Recomendaciones
 

@@ -1,6 +1,7 @@
 param projectName string
 param environmentName string
 param location string
+param functionsResourceGroupName string = resourceGroup().name
 param postgresAdminUser string
 @secure()
 param postgresAdminPassword string
@@ -173,6 +174,7 @@ module appService './modules/app-service.bicep' = {
 
 module functions './modules/functions.bicep' = {
   name: '${baseName}-functions'
+  scope: resourceGroup(functionsResourceGroupName)
   params: {
     planName: functionsPlanName
     indexerFunctionName: indexerFunctionName

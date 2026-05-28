@@ -22,6 +22,7 @@ PROJECT_NAME=internal-assistant
 ENVIRONMENT_NAME=demo
 AZURE_LOCATION=westeurope
 AZURE_RESOURCE_GROUP=rg-internal-assistant-demo
+AZURE_FUNCTIONS_RESOURCE_GROUP=rg-internal-assistant-demo-functions
 AZURE_SUBSCRIPTION_ID=<subscription-id>
 POSTGRES_ADMIN_USER=pgadmininternal
 POSTGRES_ADMIN_PASSWORD=<password>
@@ -37,6 +38,8 @@ MICROSOFT_APP_PASSWORD=<bot-secret>
 MICROSOFT_APP_TENANT_ID=<entra-tenant-id>
 TEAMS_APP_ID=<teams-app-id>
 ```
+
+`AZURE_FUNCTIONS_RESOURCE_GROUP` separa las Azure Functions Linux Consumption del App Service Linux. Azure puede bloquear workers Linux dinámicos en un Resource Group que ya contiene workers Linux dedicados, así que esta separación mantiene las Functions en `Y1 Dynamic` sin afectar a la Web App.
 
 Opcional para trazabilidad de calidad RAG:
 

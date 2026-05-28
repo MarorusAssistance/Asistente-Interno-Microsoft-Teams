@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from internal_assistant.rag.filters import RetrievalFilters
+from internal_assistant.rag.reranking import CohereAzureRerankerProvider
 from internal_assistant.rag.retrieval import HybridRetriever
 from internal_assistant.repositories.retrieval import _filters_sql
 
@@ -139,3 +140,60 @@ def test_hybrid_retrieval_keeps_hybrid_order_when_reranker_fails():
     results = retriever.search("consulta", [0.1] * 512, limit=3)
 
     assert [item.chunk_id for item in results] == [1, 2, 3]
+
+
+def test_cohere_azure_reranker_maps_result_indexes_to_chunk_ids(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "results": [
+                    {"index": 1, "relevance_score": 0.87},
+                    {"index": 0, "relevance_score": 0.21},
+                ]
+            }
+
+    def fake_post(url, *, json, headers, timeout):
+        calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+        return FakeResponse()
+
+    monkeypatch.setattr("internal_assistant.rag.reranking.httpx.post", fake_post)
+    provider = CohereAzureRerankerProvider(
+        base_url="https://cohere-rerank.example.inference.ai.azure.com",
+        api_key="test-key",
+        model="rerank-v4.0-fast",
+        timeout_seconds=9,
+    )
+
+    results = provider.rerank(
+        query="consulta",
+        documents=[
+            {"id": 10, "text": "primer texto", "metadata": {"source_title": "Doc A", "affected_system": "AlmaTrack WMS"}},
+            {"id": 20, "text": "segundo texto", "metadata": {"source_title": "Doc B", "source_type": "document"}},
+        ],
+        top_n=2,
+    )
+
+    assert [item.chunk_id for item in results] == [20, 10]
+    assert results[0].score == pytest.approx(0.87)
+    assert calls[0]["url"].endswith("/v1/rerank")
+    assert calls[0]["json"]["model"] == "rerank-v4.0-fast"
+    assert calls[0]["json"]["documents"][0].startswith("title: Doc A")
+    assert calls[0]["headers"]["Authorization"] == "Bearer test-key"
+
+
+def test_cohere_azure_reranker_accepts_full_rerank_path():
+    provider = CohereAzureRerankerProvider(
+        base_url="https://example.services.ai.azure.com/models/providers/cohere/v2/rerank",
+        api_key="test-key",
+        model="rerank-v4.0-fast",
+        timeout_seconds=9,
+    )
+
+    assert provider.endpoint_url == "https://example.services.ai.azure.com/models/providers/cohere/v2/rerank"
