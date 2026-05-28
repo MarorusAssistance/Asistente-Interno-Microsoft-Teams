@@ -142,13 +142,6 @@ const state = {
 };
 
 const elements = {
-  apiBaseInput: document.querySelector("#apiBaseInput"),
-  userIdInput: document.querySelector("#userIdInput"),
-  sameOriginButton: document.querySelector("#sameOriginButton"),
-  localButton: document.querySelector("#localButton"),
-  healthButton: document.querySelector("#healthButton"),
-  healthStatus: document.querySelector("#healthStatus"),
-  deepStatus: document.querySelector("#deepStatus"),
   assistantState: document.querySelector("#assistantState"),
   messages: document.querySelector("#messages"),
   chatForm: document.querySelector("#chatForm"),
@@ -164,7 +157,6 @@ const elements = {
   usefulButton: document.querySelector("#usefulButton"),
   notUsefulButton: document.querySelector("#notUsefulButton"),
   feedbackStatus: document.querySelector("#feedbackStatus"),
-  rawResponse: document.querySelector("#rawResponse"),
 };
 
 function defaultApiBase() {
@@ -182,22 +174,6 @@ function loadState() {
   state.apiBase = normalizeBase(localStorage.getItem("logiassist.apiBase") || defaultApiBase());
   state.userId =
     localStorage.getItem("logiassist.userId") || `web-demo-${Math.random().toString(16).slice(2, 8)}`;
-  elements.apiBaseInput.value = state.apiBase;
-  elements.userIdInput.value = state.userId;
-}
-
-function persistConnection() {
-  state.apiBase = normalizeBase(elements.apiBaseInput.value || defaultApiBase());
-  state.userId = elements.userIdInput.value.trim() || "web-demo";
-  elements.apiBaseInput.value = state.apiBase;
-  elements.userIdInput.value = state.userId;
-  localStorage.setItem("logiassist.apiBase", state.apiBase);
-  localStorage.setItem("logiassist.userId", state.userId);
-}
-
-function setPill(element, text, kind) {
-  element.textContent = text;
-  element.className = `pill ${kind}`;
 }
 
 function setAssistantState(text, kind = "idle") {
@@ -229,7 +205,14 @@ function appendMessage(role, text, kind = role) {
 
   const avatar = document.createElement("span");
   avatar.className = "message-avatar";
-  avatar.textContent = role === "user" ? "TU" : role === "error" ? "!" : "LA";
+  if (role === "assistant") {
+    const img = document.createElement("img");
+    img.src = "/static/brand-logo.png";
+    img.alt = "";
+    avatar.append(img);
+  } else {
+    avatar.textContent = role === "user" ? "TU" : "!";
+  }
 
   const content = document.createElement("div");
   content.className = "message-content";
@@ -343,7 +326,6 @@ function renderSources(sources = [], relatedIncidents = []) {
 }
 
 async function requestJson(path, options = {}) {
-  persistConnection();
   const response = await fetch(`${state.apiBase}${path}`, {
     ...options,
     headers: {
@@ -367,25 +349,6 @@ async function requestJson(path, options = {}) {
   return payload;
 }
 
-async function checkHealth() {
-  setPill(elements.healthStatus, "Health comprobando", "neutral");
-  setPill(elements.deepStatus, "Deep health comprobando", "neutral");
-  try {
-    await requestJson("/health");
-    setPill(elements.healthStatus, "Health OK", "ok");
-  } catch (error) {
-    setPill(elements.healthStatus, "Health FAIL", "fail");
-  }
-
-  try {
-    const report = await requestJson("/health/deep");
-    const chunks = report?.checks?.chunks?.count;
-    const suffix = typeof chunks === "number" ? ` · ${chunks} chunks` : "";
-    setPill(elements.deepStatus, `Deep health OK${suffix}`, "ok");
-  } catch (error) {
-    setPill(elements.deepStatus, "Deep health FAIL", "fail");
-  }
-}
 
 async function sendMessage(message) {
   if (!message || state.busy) {
@@ -459,14 +422,12 @@ function applyChatResponse(response, messageParts) {
   messageParts.body.textContent = response.answer || response.fallback_text || "Respuesta vacía";
   renderInlineSources(messageParts.inlineSources, response.sources || [], response.related_incidents || []);
   renderSources(response.sources, response.related_incidents);
-  elements.rawResponse.textContent = JSON.stringify(response, null, 2);
   setFeedbackEnabled(Boolean(response.conversation_id));
   clearPendingStatus("Respuesta completada.");
   scrollMessages();
 }
 
 async function requestStream(path, payload, handlers) {
-  persistConnection();
   const response = await fetch(`${state.apiBase}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -565,7 +526,6 @@ function resetConversation() {
   state.conversationId = null;
   state.lastMessageId = null;
   elements.messages.innerHTML = "";
-  elements.rawResponse.textContent = "{}";
   renderSources([], []);
   setFeedbackEnabled(false);
   clearPendingStatus();
@@ -662,19 +622,6 @@ elements.chatForm.addEventListener("submit", (event) => {
   sendMessage(message);
 });
 
-elements.sameOriginButton.addEventListener("click", () => {
-  elements.apiBaseInput.value = defaultApiBase();
-  persistConnection();
-  checkHealth();
-});
-
-elements.localButton.addEventListener("click", () => {
-  elements.apiBaseInput.value = "http://127.0.0.1:8000/api";
-  persistConnection();
-  checkHealth();
-});
-
-elements.healthButton.addEventListener("click", checkHealth);
 elements.surpriseButton.addEventListener("click", suggestQuestion);
 elements.resetButton.addEventListener("click", resetConversation);
 elements.usefulButton.addEventListener("click", () => sendFeedback("useful"));
@@ -685,4 +632,3 @@ renderStarterActions();
 renderSystems();
 renderSamples();
 resetConversation();
-checkHealth();

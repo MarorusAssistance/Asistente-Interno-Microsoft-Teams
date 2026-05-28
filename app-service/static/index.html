@@ -12,34 +12,14 @@
       <section class="workspace">
         <header class="topbar">
           <div class="brand">
-            <div class="brand-mark" aria-hidden="true">LA</div>
+            <img src="/static/brand-logo.png" class="brand-mark" alt="" aria-hidden="true" />
             <div>
               <p class="eyebrow">Operations command center</p>
               <h1>LogiAssist Demo Console</h1>
               <p class="subtitle">RAG interno para documentación, incidencias y decisiones operativas.</p>
             </div>
           </div>
-          <div class="status-strip" aria-live="polite">
-            <span id="healthStatus" class="pill neutral">Health sin comprobar</span>
-            <span id="deepStatus" class="pill neutral">Deep health sin comprobar</span>
-          </div>
         </header>
-
-        <section class="connection-panel" aria-label="Configuración de API">
-          <label class="field wide">
-            <span>API base</span>
-            <input id="apiBaseInput" type="url" spellcheck="false" />
-          </label>
-          <label class="field">
-            <span>User ID</span>
-            <input id="userIdInput" type="text" spellcheck="false" />
-          </label>
-          <div class="connection-actions">
-            <button id="sameOriginButton" type="button" class="secondary-button">Este host</button>
-            <button id="localButton" type="button" class="secondary-button">Local</button>
-            <button id="healthButton" type="button" class="secondary-button">Comprobar</button>
-          </div>
-        </section>
 
         <section class="chat-panel" aria-label="Conversación">
           <div class="chat-status" id="assistantState" aria-live="polite">
@@ -112,10 +92,6 @@
             <p id="feedbackStatus" class="hint">Disponible tras recibir una respuesta.</p>
           </section>
 
-          <details class="debug-panel panel-section">
-            <summary>Debug / raw response</summary>
-            <pre id="rawResponse" class="raw-output">{}</pre>
-          </details>
         </div>
       </aside>
     </main>
